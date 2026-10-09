@@ -3,15 +3,19 @@
 Uso do plano Claude — sessão de 5h, semana, semana por modelo, uso por superfície e créditos —
 sem abrir o app. Usa o login que o Claude Code já tem neste Mac.
 
+Projeto pessoal e não oficial: não é afiliado à Anthropic nem mantido por ela.
+
 ## Instalar
 
 ```sh
+git clone https://github.com/odevmaromba/claude-usage.git
+cd claude-usage
 pnpm install
 pnpm build
 pnpm link:bin   # cria ~/.local/bin/claude-usage
 ```
 
-Requer Node 22.12+ e `~/.local/bin` no `PATH`.
+Requer Node 22.12+, pnpm 10 (`corepack enable`) e `~/.local/bin` no `PATH`.
 
 ## Usar
 
@@ -37,6 +41,8 @@ versão (avisa no terminal): depois de atualizar o CLI, feche a janela e espere 
   tela mostra o último dado salvo, com o horário.
 - O token só é enviado para `api.anthropic.com`. O cache em `~/.cache/claude-usage/` guarda só os
   números de uso.
+- O servidor do `--web` escuta só em `127.0.0.1` e não tem senha: enquanto está de pé, qualquer
+  programa da máquina consegue ler por ele e-mail, plano e uso. O token não sai por ali.
 
 ## Limites
 

@@ -2,9 +2,8 @@
 
 ## Identificação
 
-CLI pessoal: uso do plano Claude (sessão 5h, semana, por modelo, superfície, créditos) com o login
-do Claude Code. Categoria `labs`. Node 22, TS strict; só Zod em runtime. Modos: terminal, `-w` ao
-vivo, `--web` (janela local), `--json`.
+CLI pessoal: uso do plano Claude com o login do Claude Code. Categoria `labs`. Node 22, TS strict;
+só Zod em runtime. Modos: terminal, `-w`, `--web` (janela local), `--json`.
 
 ## Mapa
 
@@ -48,6 +47,8 @@ vivo, `--web` (janela local), `--json`.
 - **Endpoint não documentado, uso pessoal** — diferente do padrão porque não há API pública de
   limites do plano. Parse leniente por seção; codinome (`iguana_necktie`…) fica de fora de
   propósito; shape novo = fixture + teste.
+- **Repo público** — diferente do padrão (privado) porque é ferramenta pessoal, sem segredo nem
+  dado de cliente; fixture e teste sem dado pessoal.
 
 ## Ponteiros
 
