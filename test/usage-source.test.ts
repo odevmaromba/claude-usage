@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Credentials } from '../src/credentials.js';
 import { rateLimitedError, usageError, type UsageError } from '../src/errors.js';
 import { err, ok, type Result } from '../src/result.js';
@@ -159,6 +159,17 @@ describe('UsageSource', () => {
     expect(h.fetchCalls).toBe(7);
   });
 
+  // -w wakes 1-31s past the end (slack + jitter); the web page polls every 30s.
+  it.each([[1_000], [31_000]])('keeps the streak when the next 429 comes %i ms after the hold ends', async (late) => {
+    const source = h.source(null, 10_000);
+    for (const hold of [5, 10, 20].map((minutes) => minutes * MIN)) {
+      h.responses.push(err(rateLimitedError(null)));
+      const at = h.clock;
+      expect((await source.get()).retryAt?.getTime()).toBe(at + hold);
+      h.clock = at + hold + late;
+    }
+  });
+
   it('waits a longer positive Retry-After, capped at 1h, never less than the doubling hold', () => {
     expect(holdMs(1, 0)).toBe(BASE_HOLD_MS);
     expect(holdMs(1, 30_000)).toBe(BASE_HOLD_MS);
@@ -186,6 +197,16 @@ describe('UsageSource', () => {
     h.clock -= 10 * 60_000;
     expect((await source.get()).payload).toEqual(payload(2));
     expect(h.fetchCalls).toBe(2);
+  });
+
+  it('keeps a hold at the 1h cap when the clock steps back a little', async () => {
+    const source = h.source();
+    h.responses.push(err(rateLimitedError(7_200_000)));
+    expect((await source.get()).retryAt?.getTime()).toBe(T0 + 3_600_000);
+    h.clock -= 1_000;
+    const snapshot = await source.get({ force: true });
+    expect(h.fetchCalls).toBe(1);
+    expect(snapshot.retryAt?.getTime()).toBe(T0 + 3_600_000);
   });
 
   it('does not call the API with an expired token (30s skew)', async () => {
@@ -286,6 +307,29 @@ describe('UsageSource cache file', () => {
     h.responses.push(err(rateLimitedError(null)));
     expect((await h.source(file).get()).retryAt?.getTime()).toBe(h.clock + 10 * MIN);
     expect(JSON.parse(await readFile(backoff, 'utf8'))).toEqual({ version: 1, until: h.clock + 10 * MIN, streak: 2 });
+  });
+
+  it('ends the streak on a good read another process landed while our 429 was on the wire', async () => {
+    const backoff = join(dir, 'nested', 'backoff.json');
+    await mkdir(join(dir, 'nested'), { recursive: true });
+    await writeFile(backoff, JSON.stringify({ version: 1, until: T0, streak: 1 }));
+    let release = (): void => undefined;
+    h.gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    // Both wake as the hold ends; the winner's answer is consumed first, the loser's 429 after it.
+    h.responses.push(ok(payload(7)), err(rateLimitedError(0)));
+    h.clock = T0 + 1_000;
+    const loser = h.source(file).get();
+    await vi.waitFor(() => expect(h.fetchCalls).toBe(1));
+    h.gate = null;
+    h.clock = T0 + 1_200;
+    expect((await h.source(file).get()).error).toBeNull();
+    h.clock = T0 + 1_400;
+    release();
+    const snapshot = await loser;
+    expect(JSON.parse(await readFile(backoff, 'utf8'))).toEqual({ version: 1, until: T0 + 1_400 + BASE_HOLD_MS, streak: 1 });
+    expect(snapshot).toMatchObject({ error: { code: 'rate_limited' }, payload: payload(7) });
   });
 
   it('starts a new streak when the previous hold ended over an hour ago', async () => {

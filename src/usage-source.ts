@@ -51,8 +51,10 @@ const EXPIRY_SKEW_MS = 30_000;
 export const BASE_HOLD_MS = 300_000;
 /** Doubling stops here: 5, 10, 20, 30, 30… min. */
 const MAX_STREAK_HOLD_MS = 1_800_000;
-/** Longest hold, even when `Retry-After` asks for more; a file further out is a bad clock or junk. */
+/** Longest hold, even when `Retry-After` asks for more. */
 const MAX_HOLD_MS = 3_600_000;
+/** A hold up to this much past MAX_HOLD_MS still counts (the clock stepped back since); further out is junk. */
+const CLOCK_STEP_SLACK_MS = 300_000;
 /** A 429 this long after the previous hold ended starts a new streak. */
 const STREAK_MEMORY_MS = 3_600_000;
 
@@ -128,8 +130,7 @@ export class UsageSource implements SnapshotProvider {
     const startedAt = deps.now();
     this.#lastAttemptAt = startedAt;
 
-    const shared = await this.#readCacheFile();
-    if (shared && (!this.#cached || shared.fetchedAt > this.#cached.fetchedAt)) this.#cached = shared;
+    await this.#mergeCacheFile();
 
     const [credentials, account] = await Promise.all([deps.readCredentials(), deps.readAccount()]);
     const meta = {
@@ -168,6 +169,8 @@ export class UsageSource implements SnapshotProvider {
     if (!result.ok) {
       if (result.error.code !== 'rate_limited') return this.#settle({ ...meta, ...this.#cachedFields(), error: result.error });
       const at = deps.now();
+      // A good read another process landed while ours was on the wire also ends the streak.
+      await this.#mergeCacheFile();
       const streak = hold && this.#streakGoesOn(hold, at) ? hold.streak + 1 : 1;
       this.#hold = { until: at + holdMs(streak, result.error.retryAfterMs), streak };
       await this.#writeShared(this.#backoffFile(), { version: 1, ...this.#hold });
@@ -196,11 +199,11 @@ export class UsageSource implements SnapshotProvider {
     return lastGood < previous.until && at - previous.until < STREAK_MEMORY_MS;
   }
 
-  /** The latest hold any process recorded; one more than MAX_HOLD_MS out is a bad clock or junk. */
+  /** The latest hold any process recorded, skipping junk (further out than any hold can be). */
   async #currentHold(now: number): Promise<Hold | null> {
     let latest: Hold | null = null;
     for (const hold of [this.#hold, await this.#readBackoffFile()]) {
-      if (hold && hold.until - now <= MAX_HOLD_MS && (!latest || hold.until > latest.until)) latest = hold;
+      if (hold && hold.until - now <= MAX_HOLD_MS + CLOCK_STEP_SLACK_MS && (!latest || hold.until > latest.until)) latest = hold;
     }
     return latest;
   }
@@ -208,6 +211,12 @@ export class UsageSource implements SnapshotProvider {
   #backoffFile(): string | null {
     const file = this.#options.cacheFile;
     return file ? join(dirname(file), 'backoff.json') : null;
+  }
+
+  /** Takes the shared `last.json` when it is newer than what this process holds. */
+  async #mergeCacheFile(): Promise<void> {
+    const shared = await this.#readCacheFile();
+    if (shared && (!this.#cached || shared.fetchedAt > this.#cached.fetchedAt)) this.#cached = shared;
   }
 
   async #readCacheFile(): Promise<CachedPayload | null> {
