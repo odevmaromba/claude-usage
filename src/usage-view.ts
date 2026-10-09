@@ -75,14 +75,14 @@ const SpendSchema = z.object({
   used: z.unknown().optional(),
   limit: z.unknown().optional(),
   percent: optionalNumber,
-  severity: optionalString,
+  severity: lenientString,
   enabled: z.boolean().nullish(),
 });
 
 const ExtraUsageSchema = z.object({ is_enabled: z.boolean().nullish(), utilization: optionalNumber });
 
-const BreakdownSchema = z.object({ window_started_at: optionalString, rows: z.array(z.unknown()).nullish() });
-const BreakdownRowSchema = z.object({ key: z.string().min(1), display_name: optionalString, percent: z.number() });
+const BreakdownSchema = z.object({ window_started_at: lenientString, rows: z.array(z.unknown()).nullish() });
+const BreakdownRowSchema = z.object({ key: z.string().min(1), display_name: lenientString, percent: z.number() });
 
 /** Pre-`limits` payloads only expose these per-window keys. Codename keys are skipped on purpose. */
 const LEGACY_WINDOWS: ReadonlyArray<{ key: string; label: string; detail: string }> = [
@@ -218,7 +218,8 @@ function buildBreakdown(value: unknown): BreakdownView | null {
     const item = BreakdownRowSchema.safeParse(row);
     if (!item.success || !Number.isFinite(item.data.percent)) return [];
     const { key, display_name: displayName, percent } = item.data;
-    const label = SURFACE_LABELS[key] ?? (displayName ? stripControl(displayName).trim() : '');
+    const known = Object.hasOwn(SURFACE_LABELS, key) ? SURFACE_LABELS[key] : undefined;
+    const label = known ?? (displayName ? stripControl(displayName).trim() : '');
     return [{ key, label: label || humanize(key), percent: Math.round(percent) }];
   });
   return rows.length > 0 ? { since: parseDate(parsed.data.window_started_at), rows } : null;

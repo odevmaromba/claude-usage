@@ -141,6 +141,61 @@ describe('buildUsageView — robustness', () => {
     expect(view.breakdown).toEqual({ since: null, rows: [{ key: 'mobile_app', label: 'Mobile app', percent: 12 }] });
   });
 
+  it('keeps breakdown rows and since when cosmetic fields change type', () => {
+    const view = buildUsageView({
+      seven_day_breakdown: {
+        window_started_at: 1_759_464_000,
+        rows: [
+          { key: 'claude_code', display_name: { en: 'Claude Code' }, percent: 100 },
+          { key: 'new_app', display_name: 7, percent: 3 },
+        ],
+      },
+    });
+    expect(view.breakdown).toEqual({
+      since: null,
+      rows: [
+        { key: 'claude_code', label: 'Claude Code', percent: 100 },
+        { key: 'new_app', label: 'New app', percent: 3 },
+      ],
+    });
+  });
+
+  it('keeps credit amounts when spend.severity changes type', () => {
+    const view = buildUsageView({
+      spend: {
+        enabled: true,
+        used: { amount_minor: 2500, currency: 'USD', exponent: 2 },
+        limit: { amount_minor: 5000, currency: 'USD', exponent: 2 },
+        percent: 50,
+        severity: 1,
+      },
+    });
+    expect(view.credits).toEqual({
+      enabled: true,
+      used: { amountMinor: 2500, currency: 'USD', exponent: 2 },
+      limit: { amountMinor: 5000, currency: 'USD', exponent: 2 },
+      percent: 50,
+      severity: 'normal',
+    });
+  });
+
+  it('ignores Object.prototype names as breakdown keys', () => {
+    const view = buildUsageView({
+      seven_day_breakdown: {
+        rows: [
+          { key: 'constructor', percent: 5 },
+          { key: 'toString', display_name: 'Tools', percent: 3 },
+          { key: '__proto__', percent: 0 },
+        ],
+      },
+    });
+    expect(view.breakdown?.rows).toEqual([
+      { key: 'constructor', label: 'Constructor', percent: 5 },
+      { key: 'toString', label: 'Tools', percent: 3 },
+      { key: '__proto__', label: 'Proto', percent: 0 },
+    ]);
+  });
+
   it('maps enabled credits with money and rounds the percent', () => {
     const view = buildUsageView({
       spend: {

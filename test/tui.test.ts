@@ -186,6 +186,17 @@ describe('renderScreen', () => {
     expect(colored).toContain('\u001b[33m(\u001b[39m\u001b[1;36mCLAUDE_USAGE_FIXTURE\u001b[22;39m\u001b[33m),\u001b[39m');
   });
 
+  it('draws breakdown keys named after Object.prototype members', () => {
+    const payload = {
+      ...REAL,
+      seven_day_breakdown: { rows: [{ key: 'constructor', percent: 5 }, { key: '__proto__', percent: 0 }] },
+    };
+    const screen = renderScreen(toDisplay(snapshot({ payload }), NOW, TZ), { columns: 80, color: false });
+    const lines = screen.split('\n');
+    expect(lines.some((line) => line.startsWith('  Constructor ') && line.endsWith('  5%'))).toBe(true);
+    expect(lines).toContain('  Proto: 0%');
+  });
+
   it('explains an empty screen', () => {
     const empty = toDisplay(
       snapshot({ payload: null, fetchedAt: null, error: usageError('no_credentials', 'Nenhum login do Claude Code encontrado.', HINTS.login) }),
