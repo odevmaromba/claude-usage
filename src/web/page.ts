@@ -446,7 +446,8 @@ h2 .aside.on { color: var(--ink); }
 
   function emptyState(display) {
     var box = el('div', 'empty');
-    var notice = display && display.notice;
+    // With data, the notice goes to the banner; the empty state only explains the missing limits.
+    var notice = display && !display.hasData ? display.notice : null;
     box.appendChild(el('h3', null, notice ? 'Sem dados' : 'Nada pra mostrar'));
     if (notice) {
       richText(box.appendChild(el('p')), notice.message);
@@ -512,7 +513,7 @@ h2 .aside.on { color: var(--ink); }
     ui.plan.hidden = !display.plan;
     ui.email.textContent = display.email || '';
     var hasLimits = display.limits && display.limits.length > 0;
-    showBanner(hasLimits ? display.notice : null);
+    showBanner(display.hasData ? display.notice : null);
     var fragment = document.createDocumentFragment();
     if (hasLimits) {
       display.limits.forEach(function (limit, index) { fragment.appendChild(meter(limit, index)); });
@@ -537,6 +538,8 @@ h2 .aside.on { color: var(--ink); }
     if (lastDisplay && lastDisplay.limits && lastDisplay.limits.length) {
       showBanner(DOWN);
       ui.meters.classList.add('stale');
+      // "desde hoje 01:00" is relative to the server's day: frozen, it lies after midnight.
+      ui.since.textContent = '';
       ui.updated.textContent = lastDisplay.updatedAt ? 'último dado ' + lastDisplay.updatedAt : 'sem dados';
     } else {
       showBanner(null);

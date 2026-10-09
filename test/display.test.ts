@@ -168,6 +168,13 @@ describe('toDisplay', () => {
     expect(failing.notice?.code).toBe('bad_response');
   });
 
+  it('keeps hasData with no limits, so the page shows the notice as a banner and not as "Sem dados"', () => {
+    const display = toDisplay(snapshot({ payload: { limits: [] }, credentialsSource: 'fixture' }), NOW, TZ);
+    expect(display.hasData).toBe(true);
+    expect(display.limits).toHaveLength(0);
+    expect(display.notice?.code).toBe('fixture');
+  });
+
   it('reports an expired login', () => {
     const display = toDisplay(snapshot({ tokenExpiresAt: new Date('2026-10-06T23:00:00Z') }), NOW, TZ);
     expect(display.loginStatus).toBe('login expirou ontem 20:00');
