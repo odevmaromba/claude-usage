@@ -1,0 +1,57 @@
+version: 2.1
+
+# CI claude-usage: the same steps as `pnpm t0` (lint, typecheck, Vitest, build). No secrets or envs:
+# tests inject platform, network and credentials, and pin their own time zone.
+
+executors:
+  node:
+    docker:
+      - image: cimg/node:22.15.1
+    resource_class: small
+    working_directory: ~/project
+    environment:
+      # Skips corepack's interactive "download this version?" prompt.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      # Outside the checkout, so `eslint .` never walks it.
+      PNPM_STORE_DIR: /home/circleci/.pnpm-store
+
+jobs:
+  checks:
+    executor: node
+    steps:
+      - checkout
+      - run:
+          name: Enable corepack + activate pnpm@10.27.0
+          command: |
+            sudo corepack enable
+            corepack prepare pnpm@10.27.0 --activate
+            pnpm config set store-dir "$PNPM_STORE_DIR"
+            pnpm --version && node --version
+      - restore_cache:
+          keys:
+            - pnpm-store-v1-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-store-v1-
+      - run:
+          name: Install dependencies (frozen lockfile)
+          command: pnpm install --frozen-lockfile
+      - save_cache:
+          key: pnpm-store-v1-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - /home/circleci/.pnpm-store
+      - run:
+          name: Lint
+          command: pnpm lint
+      - run:
+          name: Typecheck
+          command: pnpm typecheck
+      - run:
+          name: Test
+          command: pnpm test
+      - run:
+          name: Build
+          command: pnpm build
+
+workflows:
+  ci:
+    jobs:
+      - checks
