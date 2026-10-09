@@ -1,0 +1,11 @@
+# deps e build
+node_modules/
+dist/
+coverage/
+
+# segredos: nunca no repo (o token mora no Keychain do Claude Code)
+.env*
+
+# sistema
+.DS_Store
+*.log

@@ -1,0 +1,36 @@
+{
+  "name": "claude-usage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tela local do uso do plano Claude, autenticada pelo login do Claude Code",
+  "type": "module",
+  "packageManager": "pnpm@10.27.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "claude-usage": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "t0": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "link:bin": "mkdir -p \"$HOME/.local/bin\" && ln -sf \"$PWD/dist/cli.js\" \"$HOME/.local/bin/claude-usage\""
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "eslint": "^10.12.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
+  }
+}
