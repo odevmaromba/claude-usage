@@ -42,8 +42,8 @@ versão (avisa no terminal): depois de atualizar o CLI, feche a janela e espere 
 
 - Lê o mesmo endpoint que o `/usage` do Claude Code, que não é documentado: pode mudar sem aviso.
 - No macOS, só o Keychain padrão do Claude Code; `CLAUDE_CONFIG_DIR` custom não é suportado.
-- No máximo uma consulta a cada 5 min (`-i`), somando terminal e janela; `r`/Atualizar
-  reaproveita leitura com menos de 1 min.
-- Se a API recusar por excesso (429), nenhum processo consulta até o horário mostrado ("Próxima
-  consulta liberada às 15:43."): 5 min, depois 10, 20 e 30 min se continuar recusando. A tela
-  segue com o último dado e a hora dele.
+- `-w` e `--web`, somados, consultam no máximo uma vez a cada 5 min (`-i`). O comando simples, o
+  `--json` e `r`/Atualizar consultam na hora, a não ser que a última leitura tenha menos de 1 min.
+- Se a API recusar por excesso (429), nenhum processo consulta até o fim da espera: 5 min, depois
+  10, 20 e 30 min se continuar recusando. A tela mostra até quando ("Próxima consulta liberada às
+  15:43.", arredondado pro minuto seguinte) e segue com o último dado e a hora dele.

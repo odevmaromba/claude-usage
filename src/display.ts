@@ -59,8 +59,9 @@ function nearestMinute(date: Date): Date {
 
 /**
  * "Próxima consulta liberada às 15:43." A clock time, so it stays true however late a frame is drawn
- * (the web banner is a live region: a countdown would be re-announced every minute). Rounded up: no
- * call goes out before the minute shown. A hold lasts at most 1h, so the clock alone is unambiguous.
+ * (the web banner is a live region: a countdown would be re-announced every minute). Rounded up: by
+ * the minute shown the hold is over (it may end up to 59s sooner, and calls resume from then). A hold
+ * lasts at most 1h, so the clock alone is unambiguous.
  */
 function releaseHint(retryAt: Date, timeZone?: string): string {
   const at = new Date(Math.ceil(retryAt.getTime() / MINUTE_MS) * MINUTE_MS);

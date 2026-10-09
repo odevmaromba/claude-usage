@@ -2,20 +2,18 @@
 
 ## Identificação
 
-CLI pessoal que mostra o uso do plano Claude (sessão 5h, semana, semana por modelo, superfície,
-créditos) sem abrir o app, com o login do Claude Code. Categoria `labs`. Node 22, TS strict; só
-Zod em runtime. Modos: tela no terminal, `-w` ao vivo, `--web` (janela local), `--json`.
+CLI pessoal: uso do plano Claude (sessão 5h, semana, por modelo, superfície, créditos) com o login
+do Claude Code. Categoria `labs`. Node 22, TS strict; só Zod em runtime. Modos: terminal, `-w` ao
+vivo, `--web` (janela local), `--json`.
 
 ## Mapa
 
-- `src/` — `cli.ts` (bin, só wiring) → `main.ts` (flags e modos). Dados: `credentials.ts`
+- `src/` — `cli.ts` (bin, só wiring) → `main.ts` (flags, modos). Dados: `credentials.ts`
   (Keychain/arquivo/env) → `usage-api.ts` (GET `/api/oauth/usage`) → `usage-source.ts` (frescor,
-  dedupe, backoff 429, cache em disco) → `usage-view.ts` (payload → modelo) → `display.ts`
-  (strings pt-BR, mesmas no terminal e na web). Telas: `tui.ts`, `web/` (`server`, `page`,
-  `launcher`).
-- `test/` — Vitest; `fixtures/` tem payload real capturado (sem segredo).
-- Runtime em `~/.cache/claude-usage/` (`last.json`, `backoff.json`, `server.log`; `0600`), fora do
-  repo.
+  dedupe, 429, cache em disco) → `usage-view.ts` (payload → modelo) → `display.ts` (strings pt-BR
+  das duas telas). Telas: `tui.ts`, `web/` (`server`, `page`, `launcher`).
+- `test/` — Vitest; `fixtures/` tem payload real (sem segredo).
+- Runtime em `~/.cache/claude-usage/` (`last.json`, `backoff.json`, `server.log`; `0600`).
 
 ## Comandos
 
@@ -28,33 +26,28 @@ Zod em runtime. Modos: tela no terminal, `-w` ao vivo, `--web` (janela local), `
 - Token OAuth é **só leitura**: nunca renovar (a rotação do refresh token desloga o Claude Code),
   gravar ou logar. Expirou → mostra o cache e manda abrir o `claude`.
 - O token só vai pra `api.anthropic.com`, com `redirect: 'error'`.
-- Endpoint não documentado: parse leniente por seção; chave com codinome (`iguana_necktie`…) fica
-  de fora de propósito. Shape novo = fixture nova + teste.
 - Web só em `127.0.0.1`: allowlist de Host (DNS rebinding), `Sec-Fetch-Site`, CSP com nonce,
   só GET/HEAD; DOM só com `textContent`. Texto de fora passa por `stripControl` antes do terminal.
-- Risco aceito (Mac de um usuário): API local sem autenticação — processo local lê e-mail/plano,
-  força consulta (piso 5s; leitura com menos de 60s é reaproveitada; nunca durante um 429) e pode
-  imitar o `/api/health`. O token nunca sai nela.
-- No máximo 1 chamada à API por intervalo (padrão 300s, mínimo 60s) somando `-w` e `--web`, via
-  `last.json`; one-shot/`--json` reaproveitam leitura com menos de 60s. Erro que não é 429 não é
-  compartilhado: cada processo tenta de novo no seu intervalo.
-- Um 429 segura todos os processos (`backoff.json` = `{version:1, until, streak}`): 5, 10, 20,
-  30 min por 429 seguido sem leitura boa; `Retry-After` só vale se for maior (teto 1h) — o endpoint
-  manda `0`. Login vencido/sem credencial aparece antes do 429.
-- Keychain: só o serviço padrão `Claude Code-credentials`; `CLAUDE_CONFIG_DIR` custom no macOS
-  não é suportado.
+- Risco aceito (Mac de um usuário): API local sem auth — processo local lê e-mail/plano, força
+  consulta (piso 5s, nunca num 429) e imita o `/api/health`. O token nunca sai nela.
+- Cota: `-w` + `--web` somam ≤1 chamada por intervalo (padrão 300s, mín. 60s) via `last.json`;
+  one-shot, `--json` e forçada reaproveitam leitura <60s. Erro não-429 não é compartilhado.
+- 429 segura todos (`backoff.json` `{version:1, until, streak}`): 5/10/20/30 min por 429 seguido
+  sem leitura boa; `Retry-After` só se maior (teto 1h; o endpoint manda `0`). `-w` tem ritmo fixo
+  e acorda no fim com até 30s de jitter. Login vencido/sem credencial aparece antes do 429.
+- Keychain: só `Claude Code-credentials`; sem `CLAUDE_CONFIG_DIR` custom no macOS.
 - `src/version.ts` acompanha o `package.json`. TypeScript `~5.9` (o typescript-eslint recusa o 7).
   Config do pnpm no `pnpm-workspace.yaml`.
 
 ## Divergências
 
 - **Sem Next, banco ou Vercel** — diferente do padrão porque é ferramenta local de um usuário.
-- **Sem Playwright/axe** — diferente do padrão porque é uma página estática; QA visual na mão
-  (Chrome headless).
+- **Sem Playwright/axe** — diferente do padrão porque é página estática; QA no Chrome headless.
 - **Env em `src/env.ts`** — diferente do padrão (`lib/env.ts`) porque um CLI não tem `lib/`.
 - **Testes em `test/`** — diferente do padrão (`tests/`) por consistência com `labs/jarvis`.
 - **Endpoint não documentado, uso pessoal** — diferente do padrão porque não há API pública de
-  limites do plano; pode quebrar sem aviso.
+  limites do plano. Parse leniente por seção; codinome (`iguana_necktie`…) fica de fora de
+  propósito; shape novo = fixture + teste.
 - **Sem CI** — diferente do padrão porque o repo é local, sem remote; T0 na mão.
 
 ## Ponteiros
