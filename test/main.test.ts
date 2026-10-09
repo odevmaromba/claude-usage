@@ -34,7 +34,9 @@ describe('main', () => {
     expect(await main(['--help'], CONTEXT)).toBe(0);
     expect(stdout).toContain('claude-usage --web');
     expect(stdout).toContain('--idle-exit <s>');
-    expect(stdout).toContain('padrão 300, mínimo 60');
+    // Tied to each line: both default to 300, so a bare substring passes with either one reverted.
+    expect(stdout).toMatch(/--interval <s>.*\(padrão 300, mínimo 60\)/);
+    expect(stdout).toMatch(/--idle-exit <s>.*\(padrão 300, mínimo 60\)/);
     stdout = '';
     expect(await main(['-v'], CONTEXT)).toBe(0);
     expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
