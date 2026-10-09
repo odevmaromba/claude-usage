@@ -54,15 +54,16 @@ export async function probe(port: number, timeoutMs = 800): Promise<Probe> {
   return identity.success ? { kind: 'stale', pid: identity.data.pid } : { kind: 'other' };
 }
 
-/** Health of the claude-usage server that answers first: ours, or another launch's that won the port. */
-async function waitForServer(port: number, timeoutMs: number): Promise<Health | null> {
+/** The first claude-usage server to answer (ours, or another launch's that won the port); `none` if none did. */
+async function waitForServer(port: number, timeoutMs: number): Promise<Probe> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const found = await probe(port, 400);
-    if (found.kind === 'ours') return found.health;
+    // Stale is final (our own child, this build, never answers as one); `other` may be a slow start.
+    if (found.kind === 'ours' || found.kind === 'stale') return found;
     await sleep(120);
   }
-  return null;
+  return { kind: 'none' };
 }
 
 const CHROME_APPS = ['/Applications/Google Chrome.app', join(homedir(), 'Applications', 'Google Chrome.app')];
@@ -128,57 +129,55 @@ function acceptServer(health: Health, options: LaunchOptions): boolean {
   return true;
 }
 
-/**
- * Reuses a matching server or starts one detached (it exits by itself after
- * `idleExitSec` without requests), then opens the window. Returns an exit code.
- */
+/** Starts our `--serve` detached (it exits by itself after `idleExitSec` without requests). */
+async function startServer(options: LaunchOptions): Promise<Probe> {
+  mkdirSync(dirname(options.logFile), { recursive: true, mode: 0o700 });
+  // Append: the previous server's last lines are often the ones that explain a failure.
+  const logFd = openSync(options.logFile, 'a', 0o600);
+  try {
+    const child = spawn(
+      process.execPath,
+      [
+        options.cliPath,
+        '--serve',
+        '--port',
+        String(options.port),
+        '--interval',
+        String(options.intervalSec),
+        '--idle-exit',
+        String(options.idleExitSec),
+      ],
+      { detached: true, stdio: ['ignore', logFd, logFd] },
+    );
+    child.on('error', () => undefined);
+    child.unref();
+  } finally {
+    closeSync(logFd);
+  }
+  // Another launch may win the port first: its server gets the same checks as a reused one.
+  return waitForServer(options.port, 5_000);
+}
+
+/** Reuses a matching server or starts one, then opens the window. Returns an exit code. */
 export async function launchWeb(options: LaunchOptions): Promise<number> {
   const url = `http://${LOOPBACK}:${options.port}/`;
   const current = await probe(options.port);
-
-  if (current.kind === 'stale') {
-    options.printError(`a porta ${options.port} tem um claude-usage de outro build (pid ${current.pid}). Encerre-o (kill ${current.pid}) ou use --port <n>.`);
-    return 1;
-  }
   if (current.kind === 'other') {
     options.printError(`a porta ${options.port} está ocupada por outro programa. Use --port <n>.`);
     return 1;
   }
-  let health: Health | null = current.kind === 'ours' ? current.health : null;
-  if (health === null) {
-    mkdirSync(dirname(options.logFile), { recursive: true, mode: 0o700 });
-    // Append: the previous server's last lines are often the ones that explain a failure.
-    const logFd = openSync(options.logFile, 'a', 0o600);
-    try {
-      const child = spawn(
-        process.execPath,
-        [
-          options.cliPath,
-          '--serve',
-          '--port',
-          String(options.port),
-          '--interval',
-          String(options.intervalSec),
-          '--idle-exit',
-          String(options.idleExitSec),
-        ],
-        { detached: true, stdio: ['ignore', logFd, logFd] },
-      );
-      child.on('error', () => undefined);
-      child.unref();
-    } finally {
-      closeSync(logFd);
-    }
-    // Another launch may win the port first: its server gets the same checks as a reused one.
-    health = await waitForServer(options.port, 5_000);
-    if (health === null) {
-      options.printError(`o servidor não subiu. Log: ${options.logFile}`);
-      return 1;
-    }
+  const found = current.kind === 'none' ? await startServer(options) : current;
+  if (found.kind === 'stale') {
+    options.printError(`a porta ${options.port} tem um claude-usage de outro build (pid ${found.pid}). Encerre-o (kill ${found.pid}) ou use --port <n>.`);
+    return 1;
   }
-  if (!acceptServer(health, options)) return 1;
+  if (found.kind !== 'ours') {
+    options.printError(`o servidor não subiu. Log: ${options.logFile}`);
+    return 1;
+  }
+  if (!acceptServer(found.health, options)) return 1;
 
   if (options.open) openWindow(url);
-  options.print(readyLine(url, options.open, health.idleExitSec));
+  options.print(readyLine(url, options.open, found.health.idleExitSec));
   return 0;
 }

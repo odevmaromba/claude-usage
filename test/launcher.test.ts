@@ -28,7 +28,7 @@ async function freePort(): Promise<number> {
   return address.port;
 }
 
-function winsThePort(health: Health): void {
+function winsThePort(health: object): void {
   race.winner = () => {
     other = createServer((_req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -80,6 +80,15 @@ describe('launchWeb when another launch wins the port', () => {
     expect(await launchWeb(options())).toBe(0);
     expect(printError).toHaveBeenCalledWith('aviso: o servidor rodando atualiza a cada 120s, não 60s.');
     expect(print).toHaveBeenCalledWith(`Servidor em http://${LOOPBACK}:${port}/ — o servidor fecha sozinho após 1h sem acessos.`);
+  });
+
+  it('names a claude-usage from another build that won the race, without waiting out the 5s', async () => {
+    winsThePort({ app: 'claude-usage', version: '0.0.9', pid: 4242 });
+    const started = Date.now();
+    expect(await launchWeb(options())).toBe(1);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(printError).toHaveBeenCalledWith(expect.stringContaining('outro build (pid 4242)'));
+    expect(print).not.toHaveBeenCalled();
   });
 
   it('stays quiet when the server that answers matches this launch', async () => {

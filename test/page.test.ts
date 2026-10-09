@@ -14,6 +14,10 @@ describe('web page script', () => {
     expect(scriptSource('render', 'serverDown')).toContain('showBanner(display.hasData ? display.notice : null)');
   });
 
+  it('treats data without limits as data when the server goes away (banner, not "Sem dados")', () => {
+    expect(scriptSource('serverDown', 'setBusy')).toContain('if (lastDisplay && lastDisplay.hasData)');
+  });
+
   it('drops the day-relative breakdown label when the server goes away', () => {
     const body = scriptSource('serverDown', 'setBusy');
     expect(body).toContain("ui.meters.classList.add('stale')");

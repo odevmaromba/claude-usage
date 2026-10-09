@@ -535,7 +535,7 @@ h2 .aside.on { color: var(--ink); }
   }
 
   function serverDown() {
-    if (lastDisplay && lastDisplay.limits && lastDisplay.limits.length) {
+    if (lastDisplay && lastDisplay.hasData) {
       showBanner(DOWN);
       ui.meters.classList.add('stale');
       // "desde hoje 01:00" is relative to the server's day: frozen, it lies after midnight.
