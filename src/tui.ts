@@ -329,6 +329,8 @@ const ESC = '\u001b';
 const TICK_SLACK_MS = 15;
 /** After a 429 hold, wake this long past its end so the source sees it over. */
 const HOLD_SLACK_MS = 1_000;
+/** Plus up to this much at random: every `-w` shares the hold's end, and waking together means calling together. */
+const HOLD_JITTER_MS = 30_000;
 /** On quit, how long a request already on the wire gets to land in the shared cache (`last.json`/`backoff.json`). */
 const QUIT_GRACE_MS = 1_000;
 /** 128 + signal number, as shells report a process killed by it. */
@@ -362,7 +364,8 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
     const rows = output.rows >= 1 ? Math.floor(output.rows) : 24;
     const display = snapshot ? toDisplay(snapshot, now) : null;
     const seconds = Math.max(0, Math.ceil((nextFetchAt - now.getTime()) / 1000));
-    const footer = busy ? 'atualizando…' : `próxima em ${countdown(seconds)} · r atualiza · q sai`;
+    // Keys first: on a narrow pane truncation eats the end of the countdown, not how to quit.
+    const footer = busy ? 'atualizando…' : `r atualiza · q sai · próxima em ${countdown(seconds)}`;
     const lines = display
       ? renderScreen(display, { columns: output.columns ?? 80, rows, color: options.color, richColor: options.richColor, footer }).split('\n')
       : ['', `${INDENT}carregando…`];
@@ -388,6 +391,9 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
   const refresh = async (force: boolean): Promise<void> => {
     if (busy || closed) return;
     busy = true;
+    // The next cycle counts from here, not from the answer: a period stretched by each request's
+    // own time drifts this -w into another's phase, and two -w in phase both call.
+    const startedAt = Date.now();
     clearTimeout(fetchTimer);
     draw();
     try {
@@ -400,10 +406,10 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
       busy = false;
       if (!closed) {
         // During a 429 hold, wake when it ends: a cycle before that would not call the API.
-        const holdLeft = (snapshot?.retryAt?.getTime() ?? 0) - Date.now() + HOLD_SLACK_MS;
-        const wait = Math.max(options.intervalMs, holdLeft);
-        nextFetchAt = Date.now() + wait;
-        fetchTimer = setTimeout(() => void refresh(false), wait);
+        const retryAt = snapshot?.retryAt?.getTime();
+        const holdEnd = retryAt === undefined ? 0 : retryAt + HOLD_SLACK_MS + Math.floor(Math.random() * HOLD_JITTER_MS);
+        nextFetchAt = Math.max(startedAt + options.intervalMs, holdEnd);
+        fetchTimer = setTimeout(() => void refresh(false), Math.max(0, nextFetchAt - Date.now()));
         draw();
         tick();
       }
