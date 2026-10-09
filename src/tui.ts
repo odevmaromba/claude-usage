@@ -230,7 +230,8 @@ function statusText(display: Display): string {
 
 /** Content width and left margin; a narrow terminal loses the margin instead of wrapping lines. */
 function geometry(columns: number): { width: number; indent: string } {
-  const total = Number.isFinite(columns) ? Math.floor(columns) : 80;
+  // A pty that never got a window size reports 0 columns: treat it as unknown, like a pipe.
+  const total = Number.isFinite(columns) && columns >= 1 ? Math.floor(columns) : 80;
   const available = total - INDENT.length * 2;
   if (available >= MIN_WIDTH) return { width: Math.min(MAX_WIDTH, available), indent: INDENT };
   // One spare column: a line that ends on the last one makes some terminals wrap early.
@@ -241,12 +242,15 @@ interface Block {
   readonly lines: readonly string[];
   /** First to go when the frame is taller than the terminal. */
   readonly optional: boolean;
+  /** Kept right above the status line when the body is clipped (a stale-data notice). */
+  readonly pinned?: boolean;
 }
 
 /**
  * Watch mode: a frame taller than the terminal scrolls the alt screen and tears
- * every redraw. Drops blank lines, then optional blocks, then clips the body;
- * the status line and footer always stay on the last rows.
+ * every redraw. Drops blank lines, then optional blocks, then clips the body
+ * from the bottom but keeps pinned blocks; the status line and footer always
+ * stay on the last rows.
  */
 function fitRows(blocks: readonly Block[], tail: readonly string[], rows: number): string[] {
   const body = (all: boolean, spaced: boolean): string[] =>
@@ -254,7 +258,11 @@ function fitRows(blocks: readonly Block[], tail: readonly string[], rows: number
   const candidates = [['', ...body(true, true), ...tail], [...body(true, false), ...tail], [...body(false, false), ...tail]];
   const fit = candidates.find((lines) => lines.length <= rows);
   if (fit) return fit;
-  return [...body(false, false).slice(0, Math.max(0, rows - tail.length)), ...tail].slice(-rows);
+  const room = Math.max(0, rows - tail.length);
+  const kept = blocks.filter((block) => !block.optional);
+  const pinned = kept.filter((block) => block.pinned).flatMap((block) => block.lines).slice(0, room);
+  const rest = kept.filter((block) => !block.pinned).flatMap((block) => block.lines);
+  return [...rest.slice(0, room - pinned.length), ...pinned, ...tail].slice(-rows);
 }
 
 export function renderScreen(display: Display, options: RenderOptions): string {
@@ -276,7 +284,7 @@ export function renderScreen(display: Display, options: RenderOptions): string {
   for (const limit of display.limits) blocks.push({ lines: limitBlock(limit, width, paint), optional: false });
   if (display.breakdown) blocks.push({ lines: breakdownBlock(display.breakdown, width, paint), optional: true });
   if (display.credits) blocks.push({ lines: [creditsLine(display.credits, width, paint)], optional: true });
-  if (display.notice) blocks.push({ lines: noticeBlock(display.notice, width, paint), optional: false });
+  if (display.notice) blocks.push({ lines: noticeBlock(display.notice, width, paint), optional: false, pinned: true });
   const tail = [paint.dim(truncate(statusText(display), width))];
   if (options.footer) tail.push(paint.dim(truncate(options.footer, width)));
 
@@ -350,7 +358,8 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
   const draw = (force = false): void => {
     if (closed) return;
     const now = new Date();
-    const rows = Math.max(1, output.rows ?? 24);
+    // 0 rows (pty with no window size) is unknown, not a 1-row terminal.
+    const rows = output.rows >= 1 ? Math.floor(output.rows) : 24;
     const display = snapshot ? toDisplay(snapshot, now) : null;
     const seconds = Math.max(0, Math.ceil((nextFetchAt - now.getTime()) / 1000));
     const footer = busy ? 'atualizando…' : `próxima em ${countdown(seconds)} · r atualiza · q sai`;

@@ -155,6 +155,20 @@ describe('renderScreen', () => {
       expect(fitted(8).at(-2)).toContain('atualizado 12:20');
       expect(fitted(8)[0]).toContain('CLAUDE · USO DO PLANO');
     });
+
+    it('clips the limits before a stale-data notice', () => {
+      const stale = toDisplay(snapshot({ error: usageError('token_expired', 'O login do Claude Code expirou.', HINTS.renew) }), NOW, TZ);
+      const at = (rows: number): string[] => renderScreen(stale, { columns: 80, rows, color: false, footer: FOOTER }).split('\n');
+      for (const rows of [13, 8, 5]) {
+        const lines = at(rows);
+        expect(lines).toHaveLength(rows);
+        expect(lines.at(-1)).toBe(`  ${FOOTER}`);
+        expect(lines.at(-3)).toContain('Abra o claude uma vez');
+        expect(lines.at(-4)).toContain('! O login do Claude Code expirou. Mostrando dados de 12:20.');
+      }
+      expect(at(13)[0]).toContain('CLAUDE · USO DO PLANO');
+      expect(at(3)[0]).toContain('! O login do Claude Code expirou.');
+    });
   });
 
   it('emits ANSI only when color is on', () => {
@@ -218,5 +232,12 @@ describe('resetText', () => {
       'renovou hoje 16:50 · número anterior à renovação',
     );
     expect(resetText({ ...base, resetIn: null, resetAt: null, resetPassed: false })).toBe('sem horário de renovação');
+  });
+});
+
+describe('terminal with no window size (0x0 pty)', () => {
+  const display = toDisplay(snapshot(), NOW, TZ);
+  it('renders 0 columns as the default 80, not the narrow layout', () => {
+    expect(renderScreen(display, { columns: 0, color: false })).toBe(renderScreen(display, { columns: 80, color: false }));
   });
 });

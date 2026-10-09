@@ -2,9 +2,9 @@
 import { fileURLToPath } from 'node:url';
 import { main } from './main.js';
 
-// `claude-usage --json | head -1`: the reader left, so there is nothing left to say.
+// `claude-usage --json | head -1`: the reader left, so stop writing; the exit code stays main's.
 process.stdout.on('error', (error) => {
-  if ('code' in error && error.code === 'EPIPE') process.exit(0);
+  if ('code' in error && error.code === 'EPIPE') return;
   throw error;
 });
 
