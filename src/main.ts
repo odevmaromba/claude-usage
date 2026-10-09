@@ -31,7 +31,7 @@ Uso
   claude-usage --json       resposta crua da API
 
 Opções
-  -i, --interval <s>   atualização do -w/--web, em segundos (padrão ${DEFAULT_INTERVAL_SEC}, mínimo 60)
+  -i, --interval <s>   atualização do -w/--web, em segundos (padrão ${DEFAULT_INTERVAL_SEC}, mínimo 180)
   -p, --port <n>       porta do --web (padrão ${DEFAULT_PORT})
       --no-open        --web sem abrir a janela
       --idle-exit <s>  o servidor do --web fecha após <s> sem acessos (padrão ${IDLE_EXIT_SEC}, mínimo 60)
@@ -59,7 +59,8 @@ const OPTIONS = {
   version: { type: 'boolean', short: 'v' },
 } as const;
 
-const IntervalSchema = z.coerce.number().int().min(60).max(3600);
+// The endpoint sustains about one call per 2 min (2026-10-09): under 180s a lone -w already meets 429s.
+const IntervalSchema = z.coerce.number().int().min(180).max(3600);
 const PortSchema = z.coerce.number().int().min(1024).max(65_535);
 // At least twice the page poll (page.ts POLL_MS = 30s): at 30 an open window can lose the race with the idle tick.
 const IdleExitSchema = z.coerce.number().int().min(60).max(86_400);
@@ -146,7 +147,7 @@ export async function main(argv: readonly string[], context: MainContext): Promi
 
   const intervalSec = parseNumber(IntervalSchema, values.interval, DEFAULT_INTERVAL_SEC);
   if (intervalSec === null) {
-    printError('--interval aceita de 60 a 3600 segundos.');
+    printError('--interval aceita de 180 a 3600 segundos.');
     return 2;
   }
   const port = parseNumber(PortSchema, values.port, DEFAULT_PORT);

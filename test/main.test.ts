@@ -35,7 +35,7 @@ describe('main', () => {
     expect(stdout).toContain('claude-usage --web');
     expect(stdout).toContain('--idle-exit <s>');
     // Tied to each line: both default to 300, so a bare substring passes with either one reverted.
-    expect(stdout).toMatch(/--interval <s>.*\(padrão 300, mínimo 60\)/);
+    expect(stdout).toMatch(/--interval <s>.*\(padrão 300, mínimo 180\)/);
     expect(stdout).toMatch(/--idle-exit <s>.*\(padrão 300, mínimo 60\)/);
     stdout = '';
     expect(await main(['-v'], CONTEXT)).toBe(0);
@@ -45,9 +45,9 @@ describe('main', () => {
   it.each([
     [['--watch', '--web'], 'use um modo só'],
     [['--json', '--serve'], 'use um modo só'],
-    [['--interval', '10'], '--interval aceita de 60 a 3600'],
-    [['-i', '30'], '--interval aceita de 60 a 3600'],
-    [['-i', 'abc'], '--interval aceita de 60 a 3600'],
+    [['--interval', '10'], '--interval aceita de 180 a 3600'],
+    [['-i', '179'], '--interval aceita de 180 a 3600'],
+    [['-i', 'abc'], '--interval aceita de 180 a 3600'],
     [['--port', '80'], '--port aceita de 1024 a 65535'],
     [['--idle-exit', '5'], '--idle-exit aceita de 60 a 86400'],
     [['--idle-exit', '30'], '--idle-exit aceita de 60 a 86400'],
@@ -56,6 +56,10 @@ describe('main', () => {
   ])('rejects %j with exit 2', async (argv, message) => {
     expect(await main(argv, CONTEXT)).toBe(2);
     expect(stderr).toContain(message);
+  });
+
+  it('accepts -i at the 180s floor', async () => {
+    expect(await main(['-i', '180'], CONTEXT)).toBe(0);
   });
 
   it('renders the screen from a fixture', async () => {

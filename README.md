@@ -22,7 +22,7 @@ Requer Node 22.12+ e `~/.local/bin` no `PATH`.
 | `claude-usage --web` | abre uma janela (Chrome em modo app) servida em `127.0.0.1:7177` |
 | `claude-usage --json` | resposta crua da API, pra scripts |
 
-Opções: `-i/--interval <s>` (padrão 300, mínimo 60), `-p/--port <n>`, `--no-open`,
+Opções: `-i/--interval <s>` (padrão 300, mínimo 180), `-p/--port <n>`, `--no-open`,
 `--idle-exit <s>`, `--color`/`--no-color`. `claude-usage --help` lista tudo.
 
 O `--web` sobe um servidor em segundo plano que encerra sozinho 5 minutos (`--idle-exit`) depois

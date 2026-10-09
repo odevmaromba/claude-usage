@@ -30,7 +30,7 @@ vivo, `--web` (janela local), `--json`.
   só GET/HEAD; DOM só com `textContent`. Texto de fora passa por `stripControl` antes do terminal.
 - Risco aceito (Mac de um usuário): API local sem auth — processo local lê e-mail/plano, força
   consulta (piso 5s, nunca num 429) e imita o `/api/health`. O token nunca sai nela.
-- Cota: `-w` + `--web` somam ≤1 chamada por intervalo (padrão 300s, mín. 60s) via `last.json`;
+- Cota: `-w` + `--web` somam ≤1 chamada por intervalo (padrão 300s, mín. 180s) via `last.json`;
   one-shot, `--json` e forçada reaproveitam leitura <60s. Erro não-429 não é compartilhado.
 - 429 segura todos (`backoff.json` `{version:1, until, streak}`): 5/10/20/30 min por 429 seguido
   sem leitura boa; `Retry-After` só se maior (teto 1h; o endpoint manda `0`). `-w` tem ritmo fixo
