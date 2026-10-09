@@ -236,6 +236,28 @@ describe('watchIdle', () => {
     expect(onIdle).not.toHaveBeenCalled();
   });
 
+  it('survives a page that polls 30s after each response, at the minimum --idle-exit', () => {
+    vi.useFakeTimers();
+    // page.ts polls POLL_MS (30s) after each response; a response takes up to 15s (Keychain 5s + API 10s).
+    const responses = [(): number => 5, (n: number): number => (n % 2 === 0 ? 5 : 600), (): number => 15_000];
+    for (let firstAt = 1; firstAt < 15_000; firstAt += 2_500) {
+      for (const responseMs of responses) {
+        let count = 0;
+        const poll = (n: number): void => {
+          count += 1;
+          setTimeout(() => poll(n + 1), responseMs(n) + 30_000);
+        };
+        setTimeout(() => poll(0), firstAt);
+        const onIdle = vi.fn();
+        const stop = watchIdle(() => count, 60_000, onIdle);
+        vi.advanceTimersByTime(6 * 3_600_000);
+        stop();
+        vi.clearAllTimers();
+        expect(onIdle).not.toHaveBeenCalled();
+      }
+    }
+  });
+
   it('stops when told to', () => {
     vi.useFakeTimers();
     const onIdle = vi.fn();
@@ -313,6 +335,37 @@ describe('launchWeb with a server already on the port', () => {
     port = portOf(app.server);
     expect(await launchWeb(options())).toBe(0);
     expect(print).toHaveBeenCalledWith(`Servidor em http://${LOOPBACK}:${port}/ — o servidor fica de pé até ser encerrado.`);
+  });
+
+  it('names a claude-usage from another build instead of calling it another program', async () => {
+    const old = createServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ app: 'claude-usage', version: VERSION, pid: 4242 }));
+    });
+    await new Promise<void>((resolve) => old.listen(0, LOOPBACK, resolve));
+    expect(await probe(portOf(old))).toEqual({ kind: 'stale', pid: 4242 });
+    expect(await launchWeb(options({ port: portOf(old) }))).toBe(1);
+    expect(printError).toHaveBeenCalledWith(expect.stringContaining(`a porta ${portOf(old)} tem um claude-usage de outro build (pid 4242). Encerre-o (kill 4242)`));
+    expect(printError).not.toHaveBeenCalledWith(expect.stringContaining('outro programa'));
+    expect(print).not.toHaveBeenCalled();
+    old.close();
+  });
+
+  it('strips control characters from a forged server version before the terminal', async () => {
+    const forged = createServer((_req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(
+        JSON.stringify({ app: 'claude-usage', version: '0.1.0\u001b]52;c;ZXZpbA==\u0007\u001b[2Jfake', pid: 4242, fixture: false, intervalSec: 60, idleExitSec: 300 }),
+      );
+    });
+    await new Promise<void>((resolve) => forged.listen(0, LOOPBACK, resolve));
+    expect(await launchWeb(options({ port: portOf(forged) }))).toBe(0);
+    expect(printError).toHaveBeenCalledWith(`aviso: o servidor rodando é v0.1.0]52;c;ZXZpbA==[2Jfake (CLI v${VERSION}).`);
+    for (const [line] of printError.mock.calls) {
+      expect(String(line)).not.toContain('\u001b');
+      expect(String(line)).not.toContain('\u0007');
+    }
+    forged.close();
   });
 
   it('sends a busy port to stderr', async () => {

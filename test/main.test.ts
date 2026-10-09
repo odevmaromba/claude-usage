@@ -47,7 +47,8 @@ describe('main', () => {
     [['-i', '30'], '--interval aceita de 60 a 3600'],
     [['-i', 'abc'], '--interval aceita de 60 a 3600'],
     [['--port', '80'], '--port aceita de 1024 a 65535'],
-    [['--idle-exit', '5'], '--idle-exit aceita de 30 a 86400'],
+    [['--idle-exit', '5'], '--idle-exit aceita de 60 a 86400'],
+    [['--idle-exit', '30'], '--idle-exit aceita de 60 a 86400'],
     [['--bogus'], 'Veja claude-usage --help'],
     [['extra'], 'Veja claude-usage --help'],
   ])('rejects %j with exit 2', async (argv, message) => {

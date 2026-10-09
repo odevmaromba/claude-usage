@@ -34,7 +34,7 @@ Opções
   -i, --interval <s>   atualização do -w/--web, em segundos (padrão ${DEFAULT_INTERVAL_SEC}, mínimo 60)
   -p, --port <n>       porta do --web (padrão ${DEFAULT_PORT})
       --no-open        --web sem abrir a janela
-      --idle-exit <s>  o servidor do --web fecha após <s> sem acessos (padrão ${IDLE_EXIT_SEC})
+      --idle-exit <s>  o servidor do --web fecha após <s> sem acessos (padrão ${IDLE_EXIT_SEC}, mínimo 60)
       --color          cores mesmo fora de um terminal
       --no-color       sem cores
       --serve          só o servidor, em primeiro plano (debug)
@@ -61,7 +61,8 @@ const OPTIONS = {
 
 const IntervalSchema = z.coerce.number().int().min(60).max(3600);
 const PortSchema = z.coerce.number().int().min(1024).max(65_535);
-const IdleExitSchema = z.coerce.number().int().min(30).max(86_400);
+// At least twice the page poll (page.ts POLL_MS = 30s): at 30 an open window can lose the race with the idle tick.
+const IdleExitSchema = z.coerce.number().int().min(60).max(86_400);
 
 function print(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -155,7 +156,7 @@ export async function main(argv: readonly string[], context: MainContext): Promi
   }
   const idleExitSec = values['idle-exit'] === undefined ? null : parseNumber(IdleExitSchema, values['idle-exit'], 0);
   if (values['idle-exit'] !== undefined && idleExitSec === null) {
-    printError('--idle-exit aceita de 30 a 86400 segundos.');
+    printError('--idle-exit aceita de 60 a 86400 segundos.');
     return 2;
   }
 
