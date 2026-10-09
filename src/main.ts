@@ -12,14 +12,14 @@ import { cacheDir, claudeGlobalConfigFile } from './paths.js';
 import { err, ok } from './result.js';
 import { colorSupport, runOnce, runWatch } from './tui.js';
 import { fetchUsage, UsagePayloadSchema } from './usage-api.js';
-import { UsageSource, type UsageSourceDeps } from './usage-source.js';
+import { SHARED_READ_MS, UsageSource, type UsageSourceDeps } from './usage-source.js';
 import { VERSION } from './version.js';
 import { launchWeb } from './web/launcher.js';
 import { serve } from './web/server.js';
 
 const DEFAULT_PORT = 7177;
-const DEFAULT_INTERVAL_SEC = 60;
-const ONE_SHOT_MAX_AGE_MS = 15_000;
+/** Measured 2026-10-09: polling every 60s got a 429 on half the calls. Claude Code's own background read is 5 min. */
+const DEFAULT_INTERVAL_SEC = 300;
 const IDLE_EXIT_SEC = 300;
 
 const HELP = `claude-usage v${VERSION} — uso do plano Claude, pelo login do Claude Code
@@ -31,7 +31,7 @@ Uso
   claude-usage --json       resposta crua da API
 
 Opções
-  -i, --interval <s>   atualização do -w/--web, em segundos (padrão ${DEFAULT_INTERVAL_SEC}, mínimo 30)
+  -i, --interval <s>   atualização do -w/--web, em segundos (padrão ${DEFAULT_INTERVAL_SEC}, mínimo 60)
   -p, --port <n>       porta do --web (padrão ${DEFAULT_PORT})
       --no-open        --web sem abrir a janela
       --idle-exit <s>  o servidor do --web fecha após <s> sem acessos (padrão ${IDLE_EXIT_SEC})
@@ -59,7 +59,7 @@ const OPTIONS = {
   version: { type: 'boolean', short: 'v' },
 } as const;
 
-const IntervalSchema = z.coerce.number().int().min(30).max(3600);
+const IntervalSchema = z.coerce.number().int().min(60).max(3600);
 const PortSchema = z.coerce.number().int().min(1024).max(65_535);
 const IdleExitSchema = z.coerce.number().int().min(30).max(86_400);
 
@@ -145,7 +145,7 @@ export async function main(argv: readonly string[], context: MainContext): Promi
 
   const intervalSec = parseNumber(IntervalSchema, values.interval, DEFAULT_INTERVAL_SEC);
   if (intervalSec === null) {
-    printError('--interval aceita de 30 a 3600 segundos.');
+    printError('--interval aceita de 60 a 3600 segundos.');
     return 2;
   }
   const port = parseNumber(PortSchema, values.port, DEFAULT_PORT);
@@ -189,7 +189,7 @@ export async function main(argv: readonly string[], context: MainContext): Promi
   }
 
   if (values.json) {
-    const snapshot = await createSource(env, ONE_SHOT_MAX_AGE_MS).get();
+    const snapshot = await createSource(env, SHARED_READ_MS).get();
     if (snapshot.payload) print(JSON.stringify(snapshot.payload, null, 2));
     // The notice says how old the payload above is when it is the cached one.
     const notice = snapshot.error ? toDisplay(snapshot, new Date()).notice : null;
@@ -211,9 +211,9 @@ export async function main(argv: readonly string[], context: MainContext): Promi
     }
     // Slightly under the interval so timer jitter never skips a cycle.
     const code = await runWatch(createSource(env, Math.max(1_000, intervalMs - 2_000)), { ...terminal, intervalMs });
-    // Leave now: a request still in flight would hold the exit for up to 10s. stdout is a TTY, so nothing is pending.
+    // runWatch already gave a request in flight QUIT_GRACE_MS to persist; leave now instead of waiting out its 10s timeout. stdout is a TTY, so nothing is pending.
     process.exit(code);
   }
 
-  return runOnce(createSource(env, ONE_SHOT_MAX_AGE_MS), terminal);
+  return runOnce(createSource(env, SHARED_READ_MS), terminal);
 }

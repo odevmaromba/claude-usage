@@ -22,11 +22,12 @@ Requer Node 22.12+ e `~/.local/bin` no `PATH`.
 | `claude-usage --web` | abre uma janela (Chrome em modo app) servida em `127.0.0.1:7177` |
 | `claude-usage --json` | resposta crua da API, pra scripts |
 
-Opções: `-i/--interval <s>` (padrão 60, mínimo 30), `-p/--port <n>`, `--no-open`,
+Opções: `-i/--interval <s>` (padrão 300, mínimo 60), `-p/--port <n>`, `--no-open`,
 `--idle-exit <s>`, `--color`/`--no-color`. `claude-usage --help` lista tudo.
 
 O `--web` sobe um servidor em segundo plano que encerra sozinho 5 minutos (`--idle-exit`) depois
-que a janela fecha. Rodar `--web` de novo reaproveita o servidor que estiver de pé.
+que a janela fecha. Rodar `--web` de novo reaproveita o servidor que estiver de pé, mesmo de outra
+versão (avisa no terminal): depois de atualizar o CLI, feche a janela e espere ele encerrar.
 
 ## Login e privacidade
 
@@ -41,4 +42,8 @@ que a janela fecha. Rodar `--web` de novo reaproveita o servidor que estiver de 
 
 - Lê o mesmo endpoint que o `/usage` do Claude Code, que não é documentado: pode mudar sem aviso.
 - No macOS, só o Keychain padrão do Claude Code; `CLAUDE_CONFIG_DIR` custom não é suportado.
-- No máximo uma consulta por intervalo, somando terminal e janela.
+- No máximo uma consulta a cada 5 min (`-i`), somando terminal e janela; `r`/Atualizar
+  reaproveita leitura com menos de 1 min.
+- Se a API recusar por excesso (429), nenhum processo consulta até o horário mostrado ("Próxima
+  consulta liberada às 15:43."): 5 min, depois 10, 20 e 30 min se continuar recusando. A tela
+  segue com o último dado e a hora dele.

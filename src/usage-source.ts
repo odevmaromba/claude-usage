@@ -18,6 +18,8 @@ export interface Snapshot {
   readonly account: AccountInfo | null;
   /** Where the token came from; `fixture` means the numbers are not the account's. */
   readonly credentialsSource: CredentialsSource | null;
+  /** Set with a 429: no process calls the API before this (`backoff.json`). */
+  readonly retryAt: Date | null;
 }
 
 export interface SnapshotProvider {
@@ -34,18 +36,25 @@ export interface UsageSourceDeps {
 export interface UsageSourceOptions {
   /** Payload younger than this is served without hitting the API (also across processes, via the cache file). */
   readonly maxAgeMs: number;
-  /** `null` disables persistence (fixtures, tests). A 429 backoff goes next to it, in `backoff.json`. */
+  /** `null` disables persistence (fixtures, tests). A 429 hold goes next to it, in `backoff.json`. */
   readonly cacheFile: string | null;
   readonly deps: UsageSourceDeps;
 }
 
 /** A forced refresh still waits this long after the previous attempt. */
 export const FORCE_FLOOR_MS = 5_000;
+/** A read younger than this is reused even when forced, and by one-shot modes (Claude Code shares reads for 60s). */
+export const SHARED_READ_MS = 60_000;
 /** Treat the token as expired slightly early: the request takes time. */
 const EXPIRY_SKEW_MS = 30_000;
-const DEFAULT_BACKOFF_MS = 60_000;
-/** A backoff further out than this comes from a bad clock or a junk file: ignore it. */
-const MAX_BACKOFF_MS = 3_600_000;
+/** Hold after a 429 that brings no positive `Retry-After` (Claude Code's own); doubles per 429 in a row. */
+export const BASE_HOLD_MS = 300_000;
+/** Doubling stops here: 5, 10, 20, 30, 30… min. */
+const MAX_STREAK_HOLD_MS = 1_800_000;
+/** Longest hold, even when `Retry-After` asks for more; a file further out is a bad clock or junk. */
+const MAX_HOLD_MS = 3_600_000;
+/** A 429 this long after the previous hold ended starts a new streak. */
+const STREAK_MEMORY_MS = 3_600_000;
 
 const CacheFileSchema = z.object({
   version: z.literal(1),
@@ -53,7 +62,28 @@ const CacheFileSchema = z.object({
   payload: UsagePayloadSchema,
 });
 
-const BackoffFileSchema = z.object({ version: z.literal(1), until: z.number() });
+/**
+ * Still version 1 on purpose: older builds read `until` and ignore `streak`. A file without `streak`
+ * (written before it existed) or with a bad one still holds, as one 429.
+ */
+const BackoffFileSchema = z.object({
+  version: z.literal(1),
+  until: z.number(),
+  streak: z.number().int().min(1).catch(1),
+});
+
+interface Hold {
+  /** No API call before this (epoch ms). */
+  readonly until: number;
+  /** 429s in a row, with no good read in between. */
+  readonly streak: number;
+}
+
+/** A positive `Retry-After` wins when longer; `0`, absent or short gets the doubling hold. */
+export function holdMs(streak: number, retryAfterMs: number | null): number {
+  const doubling = Math.min(BASE_HOLD_MS * 2 ** Math.min(streak - 1, 8), MAX_STREAK_HOLD_MS);
+  return Math.min(Math.max(doubling, retryAfterMs ?? 0), MAX_HOLD_MS);
+}
 
 interface CachedPayload {
   readonly payload: UsagePayload;
@@ -70,7 +100,7 @@ export class UsageSource implements SnapshotProvider {
   #cached: CachedPayload | null = null;
   #last: Snapshot | null = null;
   #lastAttemptAt = Number.NEGATIVE_INFINITY;
-  #backoffUntil = 0;
+  #hold: Hold | null = null;
   #inflight: Promise<Snapshot> | null = null;
 
   constructor(options: UsageSourceOptions) {
@@ -81,9 +111,12 @@ export class UsageSource implements SnapshotProvider {
     if (this.#inflight) return this.#inflight;
     const force = request.force === true;
     const floor = force ? FORCE_FLOOR_MS : this.#options.maxAgeMs;
+    const now = this.#options.deps.now();
     // Negative elapsed = the clock went back: refresh instead of freezing until it catches up.
-    const elapsed = this.#options.deps.now() - this.#lastAttemptAt;
-    if (this.#last && elapsed >= 0 && elapsed < floor) return Promise.resolve(this.#last);
+    const elapsed = now - this.#lastAttemptAt;
+    // A hold that ended is due now, not a whole interval after the look that reported it.
+    const holdEnded = (this.#last?.retryAt?.getTime() ?? Number.POSITIVE_INFINITY) <= now;
+    if (this.#last && !holdEnded && elapsed >= 0 && elapsed < floor) return Promise.resolve(this.#last);
     this.#inflight = this.#refresh(force).finally(() => {
       this.#inflight = null;
     });
@@ -104,17 +137,16 @@ export class UsageSource implements SnapshotProvider {
       tokenExpiresAt: credentials.ok ? credentials.value.expiresAt : null,
       account,
       credentialsSource: credentials.ok ? credentials.value.source : null,
+      retryAt: null,
     };
 
     const age = this.#cached ? startedAt - this.#cached.fetchedAt : Number.POSITIVE_INFINITY;
-    if (!force && age >= 0 && age < maxAgeMs) {
+    // Forced or not, a read younger than SHARED_READ_MS is not repeated.
+    const freshFor = force ? Math.min(maxAgeMs, SHARED_READ_MS) : maxAgeMs;
+    if (age >= 0 && age < freshFor) {
       return this.#settle({ ...meta, ...this.#cachedFields(), error: null });
     }
-    // Another process may be the one that got the 429.
-    const waitMs = Math.max(this.#backoffUntil, (await this.#readBackoffFile()) ?? 0) - startedAt;
-    if (waitMs > 0 && waitMs <= MAX_BACKOFF_MS) {
-      return this.#settle({ ...meta, ...this.#cachedFields(), error: rateLimitedError(waitMs) });
-    }
+    // Login problems first: the user can fix them now, a 429 only by waiting.
     if (!credentials.ok) return this.#settle({ ...meta, ...this.#cachedFields(), error: credentials.error });
 
     const expiresAt = credentials.value.expiresAt;
@@ -126,13 +158,20 @@ export class UsageSource implements SnapshotProvider {
       });
     }
 
+    // Another process may be the one that got the 429.
+    const hold = await this.#currentHold(startedAt);
+    if (hold && hold.until > startedAt) {
+      return this.#settle({ ...meta, ...this.#cachedFields(), error: rateLimitedError(), retryAt: new Date(hold.until) });
+    }
+
     const result = await deps.fetchUsage(credentials.value.accessToken);
     if (!result.ok) {
-      if (result.error.code === 'rate_limited') {
-        this.#backoffUntil = deps.now() + Math.min(result.error.retryAfterMs ?? DEFAULT_BACKOFF_MS, MAX_BACKOFF_MS);
-        await this.#writeShared(this.#backoffFile(), { version: 1, until: this.#backoffUntil });
-      }
-      return this.#settle({ ...meta, ...this.#cachedFields(), error: result.error });
+      if (result.error.code !== 'rate_limited') return this.#settle({ ...meta, ...this.#cachedFields(), error: result.error });
+      const at = deps.now();
+      const streak = hold && this.#streakGoesOn(hold, at) ? hold.streak + 1 : 1;
+      this.#hold = { until: at + holdMs(streak, result.error.retryAfterMs), streak };
+      await this.#writeShared(this.#backoffFile(), { version: 1, ...this.#hold });
+      return this.#settle({ ...meta, ...this.#cachedFields(), error: result.error, retryAt: new Date(this.#hold.until) });
     }
 
     this.#cached = { payload: result.value, fetchedAt: deps.now() };
@@ -151,6 +190,21 @@ export class UsageSource implements SnapshotProvider {
     return snapshot;
   }
 
+  /** Same streak while no read succeeded since the previous hold, and it ended under STREAK_MEMORY_MS ago. */
+  #streakGoesOn(previous: Hold, at: number): boolean {
+    const lastGood = this.#cached?.fetchedAt ?? Number.NEGATIVE_INFINITY;
+    return lastGood < previous.until && at - previous.until < STREAK_MEMORY_MS;
+  }
+
+  /** The latest hold any process recorded; one more than MAX_HOLD_MS out is a bad clock or junk. */
+  async #currentHold(now: number): Promise<Hold | null> {
+    let latest: Hold | null = null;
+    for (const hold of [this.#hold, await this.#readBackoffFile()]) {
+      if (hold && hold.until - now <= MAX_HOLD_MS && (!latest || hold.until > latest.until)) latest = hold;
+    }
+    return latest;
+  }
+
   #backoffFile(): string | null {
     const file = this.#options.cacheFile;
     return file ? join(dirname(file), 'backoff.json') : null;
@@ -161,9 +215,9 @@ export class UsageSource implements SnapshotProvider {
     return parsed.success ? { payload: parsed.data.payload, fetchedAt: parsed.data.fetchedAt } : null;
   }
 
-  async #readBackoffFile(): Promise<number | null> {
+  async #readBackoffFile(): Promise<Hold | null> {
     const parsed = BackoffFileSchema.safeParse(await readJson(this.#backoffFile()));
-    return parsed.success ? parsed.data.until : null;
+    return parsed.success ? { until: parsed.data.until, streak: parsed.data.streak } : null;
   }
 
   /** Best effort, atomic, owner-only. Holds usage numbers and timestamps only, never credentials. */

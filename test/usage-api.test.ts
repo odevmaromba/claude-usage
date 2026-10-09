@@ -50,20 +50,31 @@ describe('fetchUsage', () => {
     expect(JSON.stringify(result)).not.toContain(TOKEN);
   });
 
-  it('maps 429 and keeps Retry-After', async () => {
+  it('maps 429 and keeps a positive Retry-After, leaving the hint to the display', async () => {
     const { fetchFn } = respondWith(json({}, { status: 429, headers: { 'retry-after': '120' } }));
     const result = await fetchUsage(TOKEN, { fetchFn, now: () => NOW });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('rate_limited');
       expect(result.error.retryAfterMs).toBe(120_000);
+      expect(result.error.hint).toBeNull();
     }
   });
 
-  it('defaults the 429 backoff when Retry-After is missing', async () => {
-    const { fetchFn } = respondWith(new Response(null, { status: 429 }));
-    const result = await fetchUsage(TOKEN, { fetchFn });
-    expect(!result.ok && result.error.retryAfterMs).toBe(60_000);
+  it.each([
+    ['0', 0],
+    [null, null],
+    [new Date(NOW - 1_000).toUTCString(), 0],
+  ])('passes Retry-After %j through as %j, for UsageSource to hold anyway', async (header, retryAfterMs) => {
+    const { fetchFn } = respondWith(new Response(null, { status: 429, headers: header === null ? {} : { 'retry-after': header } }));
+    const result = await fetchUsage(TOKEN, { fetchFn, now: () => NOW });
+    expect(!result.ok && result.error).toMatchObject({ code: 'rate_limited', hint: null, retryAfterMs });
+  });
+
+  it('reads a 2xx rate-limit envelope as a 429, not as a payload to cache', async () => {
+    const body = { error: { type: 'rate_limit_error', message: 'Rate limited. Please try again later.' } };
+    const result = await fetchUsage(TOKEN, { fetchFn: respondWith(json(body)).fetchFn });
+    expect(!result.ok && result.error).toMatchObject({ code: 'rate_limited', retryAfterMs: null });
   });
 
   it('rejects non-JSON and non-object bodies', async () => {
@@ -109,12 +120,6 @@ describe('fetchUsage', () => {
     expect(!stalled.ok && stalled.error.code).toBe('timeout');
     const dropped = await fetchUsage(TOKEN, { fetchFn: bodyFailing(new TypeError('terminated')) });
     expect(!dropped.ok && dropped.error.code).toBe('network_error');
-  });
-
-  it('states the wait in the 429 hint instead of promising a retry', async () => {
-    const { fetchFn } = respondWith(json({}, { status: 429, headers: { 'retry-after': '120' } }));
-    const result = await fetchUsage(TOKEN, { fetchFn, now: () => NOW });
-    expect(!result.ok && result.error.hint).toBe('Próxima consulta liberada em 2 min.');
   });
 });
 

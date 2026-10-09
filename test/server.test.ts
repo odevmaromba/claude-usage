@@ -1,6 +1,6 @@
 import { createServer, request, type IncomingHttpHeaders, type Server } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HINTS, usageError, type UsageErrorCode } from '../src/errors.js';
+import { HINTS, rateLimitedError, usageError, type UsageErrorCode } from '../src/errors.js';
 import type { Snapshot, SnapshotProvider } from '../src/usage-source.js';
 import { VERSION } from '../src/version.js';
 import { launchWeb, probe, type LaunchOptions } from '../src/web/launcher.js';
@@ -23,6 +23,7 @@ const GOOD: Snapshot = {
   tokenExpiresAt: null,
   account: null,
   credentialsSource: 'keychain',
+  retryAt: null,
 };
 
 const INFO: ServerInfo = { fixture: false, intervalSec: 60, idleExitSec: 300 };
@@ -173,6 +174,15 @@ describe('usage server', () => {
     const body = JSON.parse(reply.body);
     expect(body.error).toEqual({ code: 'no_credentials', message: 'Nenhum login do Claude Code encontrado.', hint: HINTS.login });
     expect(body.display.notice.level).toBe('error');
+  });
+
+  it('says when the next call goes out in a 429 with nothing to show', async () => {
+    provider.next = { ...GOOD, payload: null, fetchedAt: null, error: rateLimitedError(), retryAt: new Date(CAPTURED_AT.getTime() + 5 * 60_000) };
+    const reply = await call('/api/usage');
+    expect(reply.status).toBe(429);
+    const body = JSON.parse(reply.body);
+    expect(body.error.hint).toMatch(/^Próxima consulta liberada às \d\d:\d\d\.$/);
+    expect(body.display.notice.hint).toBe(body.error.hint);
   });
 
   it('answers health checks and 404s', async () => {

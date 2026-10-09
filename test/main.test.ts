@@ -34,6 +34,7 @@ describe('main', () => {
     expect(await main(['--help'], CONTEXT)).toBe(0);
     expect(stdout).toContain('claude-usage --web');
     expect(stdout).toContain('--idle-exit <s>');
+    expect(stdout).toContain('padrão 300, mínimo 60');
     stdout = '';
     expect(await main(['-v'], CONTEXT)).toBe(0);
     expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
@@ -42,8 +43,9 @@ describe('main', () => {
   it.each([
     [['--watch', '--web'], 'use um modo só'],
     [['--json', '--serve'], 'use um modo só'],
-    [['--interval', '10'], '--interval aceita de 30 a 3600'],
-    [['-i', 'abc'], '--interval aceita de 30 a 3600'],
+    [['--interval', '10'], '--interval aceita de 60 a 3600'],
+    [['-i', '30'], '--interval aceita de 60 a 3600'],
+    [['-i', 'abc'], '--interval aceita de 60 a 3600'],
     [['--port', '80'], '--port aceita de 1024 a 65535'],
     [['--idle-exit', '5'], '--idle-exit aceita de 30 a 86400'],
     [['--bogus'], 'Veja claude-usage --help'],

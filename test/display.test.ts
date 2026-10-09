@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toDisplay } from '../src/display.js';
-import { HINTS, usageError } from '../src/errors.js';
+import { HINTS, rateLimitedError, usageError } from '../src/errors.js';
 import type { Snapshot } from '../src/usage-source.js';
 import { CAPTURED_AT as NOW, loadFixture, TZ } from './helpers.js';
 
@@ -15,6 +15,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     tokenExpiresAt: new Date('2026-10-07T22:56:00Z'),
     account: { email: 'dev@example.com', displayName: null },
     credentialsSource: 'keychain',
+    retryAt: null,
     ...overrides,
   };
 }
@@ -101,6 +102,26 @@ describe('toDisplay', () => {
       hint: HINTS.renew,
     });
     expect(display.limits).toHaveLength(3);
+  });
+
+  it('says when the next call is allowed during a 429 hold, as a clock time rounded up', () => {
+    const held = snapshot({ error: rateLimitedError(null), retryAt: new Date(NOW.getTime() + 4 * 60_000 + 20_000) });
+    expect(toDisplay(held, NOW, TZ).notice).toEqual({
+      level: 'warning',
+      code: 'rate_limited',
+      message: 'Consultas demais em pouco tempo (429). Mostrando dados de 12:17.',
+      hint: 'Próxima consulta liberada às 12:26.',
+    });
+    // Absolute: a frame drawn later (or the next web poll) says the same thing.
+    expect(toDisplay(held, new Date(NOW.getTime() + 3 * 60_000), TZ).notice?.hint).toBe('Próxima consulta liberada às 12:26.');
+    // In the viewer's time zone; a hold is at most 1h, so the clock alone is unambiguous past midnight.
+    const lateNight = snapshot({ error: rateLimitedError(null), retryAt: new Date('2026-10-08T03:04:10Z') });
+    expect(toDisplay(lateNight, new Date('2026-10-08T02:40:00Z'), TZ).notice?.hint).toBe('Próxima consulta liberada às 00:05.');
+  });
+
+  it('keeps the error hint when there is no hold to report', () => {
+    const failed = snapshot({ error: usageError('network_error', 'Sem conexão com api.anthropic.com.', 'Confira a internet/VPN e tente de novo.') });
+    expect(toDisplay(failed, NOW, TZ).notice?.hint).toBe('Confira a internet/VPN e tente de novo.');
   });
 
   it('turns an error without data into an error notice', () => {

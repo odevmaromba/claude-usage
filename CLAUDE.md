@@ -33,9 +33,14 @@ Zod em runtime. Modos: tela no terminal, `-w` ao vivo, `--web` (janela local), `
 - Web só em `127.0.0.1`: allowlist de Host (DNS rebinding), `Sec-Fetch-Site`, CSP com nonce,
   só GET/HEAD; DOM só com `textContent`. Texto de fora passa por `stripControl` antes do terminal.
 - Risco aceito (Mac de um usuário): API local sem autenticação — processo local lê e-mail/plano,
-  força consulta (piso 5s) e pode imitar o `/api/health`. O token nunca sai nela.
-- No máximo 1 chamada à API por intervalo somando os processos; um 429 segura todos até o
-  `Retry-After` (`backoff.json`).
+  força consulta (piso 5s; leitura com menos de 60s é reaproveitada; nunca durante um 429) e pode
+  imitar o `/api/health`. O token nunca sai nela.
+- No máximo 1 chamada à API por intervalo (padrão 300s, mínimo 60s) somando `-w` e `--web`, via
+  `last.json`; one-shot/`--json` reaproveitam leitura com menos de 60s. Erro que não é 429 não é
+  compartilhado: cada processo tenta de novo no seu intervalo.
+- Um 429 segura todos os processos (`backoff.json` = `{version:1, until, streak}`): 5, 10, 20,
+  30 min por 429 seguido sem leitura boa; `Retry-After` só vale se for maior (teto 1h) — o endpoint
+  manda `0`. Login vencido/sem credencial aparece antes do 429.
 - Keychain: só o serviço padrão `Claude Code-credentials`; `CLAUDE_CONFIG_DIR` custom no macOS
   não é suportado.
 - `src/version.ts` acompanha o `package.json`. TypeScript `~5.9` (o typescript-eslint recusa o 7).

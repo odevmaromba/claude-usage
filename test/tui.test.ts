@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { toDisplay } from '../src/display.js';
 import { loadEnv } from '../src/env.js';
-import { HINTS, usageError } from '../src/errors.js';
-import { colorSupport, renderBar, renderScreen, resetText, truncate, visibleLength } from '../src/tui.js';
+import { HINTS, rateLimitedError, usageError } from '../src/errors.js';
+import { colorSupport, countdown, renderBar, renderScreen, resetText, truncate, visibleLength } from '../src/tui.js';
 import type { Snapshot } from '../src/usage-source.js';
 import { CAPTURED_AT as NOW, loadFixture, stripAnsi, TZ } from './helpers.js';
 
@@ -17,6 +17,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     tokenExpiresAt: new Date('2026-10-07T22:56:00Z'),
     account: { email: 'dev@example.com', displayName: null },
     credentialsSource: 'keychain',
+    retryAt: null,
     ...overrides,
   };
 }
@@ -53,6 +54,16 @@ describe('text helpers', () => {
     expect(truncate('Sessão atual', 20)).toBe('Sessão atual');
     expect(truncate('Sessão atual', 7)).toBe('Sessão…');
     expect(truncate('abc', 0)).toBe('');
+  });
+});
+
+describe('countdown', () => {
+  it('counts the watch footer down in minutes and seconds past a minute', () => {
+    expect(countdown(0)).toBe('0s');
+    expect(countdown(59)).toBe('59s');
+    expect(countdown(60)).toBe('1min 00s');
+    expect(countdown(299)).toBe('4min 59s');
+    expect(countdown(1801)).toBe('30min 01s');
   });
 });
 
@@ -100,7 +111,8 @@ describe('renderScreen', () => {
   it.each([22, 25, 28, 31])('drops the margin instead of wrapping at %d columns', (columns) => {
     const busy = toDisplay(
       snapshot({
-        error: usageError('rate_limited', 'Consultas demais em pouco tempo (429).', 'Próxima consulta liberada em 2 min.'),
+        error: rateLimitedError(),
+        retryAt: new Date(NOW.getTime() + 5 * 60_000),
         payload: { ...REAL, seven_day_breakdown: { rows: [{ key: 'chat', percent: 0 }, { key: 'surface_with_a_long_name', percent: 7 }] } },
       }),
       NOW,

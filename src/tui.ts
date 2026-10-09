@@ -287,6 +287,12 @@ export function renderScreen(display: Display, options: RenderOptions): string {
   return lines.map((line) => (line ? indent + line : line)).join('\n');
 }
 
+/** Watch footer: "45s", "4min 05s". */
+export function countdown(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}min ${String(seconds % 60).padStart(2, '0')}s`;
+}
+
 export interface TerminalOptions {
   readonly color: boolean;
   readonly richColor: boolean;
@@ -313,6 +319,10 @@ const CTRL_C = '\u0003';
 const ESC = '\u001b';
 /** Lands the redraw just past the second boundary, never just before it. */
 const TICK_SLACK_MS = 15;
+/** After a 429 hold, wake this long past its end so the source sees it over. */
+const HOLD_SLACK_MS = 1_000;
+/** On quit, how long a request already on the wire gets to land in the shared cache (`last.json`/`backoff.json`). */
+const QUIT_GRACE_MS = 1_000;
 /** 128 + signal number, as shells report a process killed by it. */
 const EXIT_SIGNALS: ReadonlyArray<readonly [NodeJS.Signals, number]> = [
   ['SIGHUP', 129],
@@ -335,6 +345,7 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
   let nextFetchAt = 0;
   let fetchTimer: NodeJS.Timeout | undefined;
   let tickTimer: NodeJS.Timeout | undefined;
+  let inflight: Promise<unknown> = Promise.resolve();
 
   const draw = (force = false): void => {
     if (closed) return;
@@ -342,7 +353,7 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
     const rows = Math.max(1, output.rows ?? 24);
     const display = snapshot ? toDisplay(snapshot, now) : null;
     const seconds = Math.max(0, Math.ceil((nextFetchAt - now.getTime()) / 1000));
-    const footer = busy ? 'atualizando…' : `próxima em ${seconds}s · r atualiza · q sai`;
+    const footer = busy ? 'atualizando…' : `próxima em ${countdown(seconds)} · r atualiza · q sai`;
     const lines = display
       ? renderScreen(display, { columns: output.columns ?? 80, rows, color: options.color, richColor: options.richColor, footer }).split('\n')
       : ['', `${INDENT}carregando…`];
@@ -371,14 +382,19 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
     clearTimeout(fetchTimer);
     draw();
     try {
-      snapshot = await source.get({ force });
+      const request = source.get({ force });
+      inflight = request;
+      snapshot = await request;
     } catch {
       // UsageSource reports failures inside the snapshot; anything else keeps the last frame.
     } finally {
       busy = false;
       if (!closed) {
-        nextFetchAt = Date.now() + options.intervalMs;
-        fetchTimer = setTimeout(() => void refresh(false), options.intervalMs);
+        // During a 429 hold, wake when it ends: a cycle before that would not call the API.
+        const holdLeft = (snapshot?.retryAt?.getTime() ?? 0) - Date.now() + HOLD_SLACK_MS;
+        const wait = Math.max(options.intervalMs, holdLeft);
+        nextFetchAt = Date.now() + wait;
+        fetchTimer = setTimeout(() => void refresh(false), wait);
         draw();
         tick();
       }
@@ -408,7 +424,13 @@ export function runWatch(source: SnapshotProvider, options: TerminalOptions & { 
       restore();
       for (const [signal, handler] of onSignals) process.off(signal, handler);
       process.off('exit', restore);
-      resolve(code);
+      // The API already counted a request on the wire: let it reach the shared files, or the next process calls again.
+      const leave = (): void => {
+        clearTimeout(grace);
+        resolve(code);
+      };
+      const grace = setTimeout(leave, QUIT_GRACE_MS);
+      void inflight.then(leave, leave);
     };
 
     process.on('exit', restore);

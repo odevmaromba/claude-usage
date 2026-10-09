@@ -138,7 +138,8 @@ export function createUsageServer(options: UsageServerOptions): UsageServer {
       const display = toDisplay(snapshot, now());
       if (!display.hasData && snapshot.error) {
         sendJson(req, res, statusForError(snapshot.error.code), {
-          error: { code: snapshot.error.code, message: snapshot.error.message, hint: snapshot.error.hint },
+          // The notice's hint: for a 429 it carries the next-call time, which the error alone does not.
+          error: { code: snapshot.error.code, message: snapshot.error.message, hint: display.notice?.hint ?? null },
           display,
         });
         return;

@@ -1,16 +1,17 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Credentials } from '../src/credentials.js';
-import { usageError, type UsageError } from '../src/errors.js';
+import { rateLimitedError, usageError, type UsageError } from '../src/errors.js';
 import { err, ok, type Result } from '../src/result.js';
 import type { UsagePayload } from '../src/usage-api.js';
-import { FORCE_FLOOR_MS, UsageSource } from '../src/usage-source.js';
+import { BASE_HOLD_MS, FORCE_FLOOR_MS, holdMs, SHARED_READ_MS, UsageSource } from '../src/usage-source.js';
 
 const TOKEN = 'sk-ant-oat01-SOURCE-TEST';
 const T0 = Date.parse('2026-10-07T15:20:47Z');
 const MAX_AGE = 60_000;
+const MIN = 60_000;
 
 function payload(percent: number): UsagePayload {
   return { limits: [{ kind: 'session', group: 'session', percent, severity: 'normal', resets_at: null }] };
@@ -82,15 +83,22 @@ describe('UsageSource', () => {
     expect(h.fetchCalls).toBe(2);
   });
 
-  it('lets force bypass maxAge, but not the 5s floor', async () => {
-    const source = h.source();
+  it('lets force bypass maxAge, but not a read under a minute old nor the 5s floor', async () => {
+    const source = h.source(null, 5 * MIN);
     await source.get();
+    h.clock += SHARED_READ_MS - 1;
+    expect((await source.get({ force: true })).error).toBeNull();
+    expect(h.fetchCalls).toBe(1);
+    h.clock += FORCE_FLOOR_MS;
+    h.responses.push(err(usageError('upstream_error', 'A API do Claude falhou (HTTP 500).')));
+    expect((await source.get({ force: true })).error?.code).toBe('upstream_error');
+    expect(h.fetchCalls).toBe(2);
     h.clock += FORCE_FLOOR_MS - 1;
     await source.get({ force: true });
-    expect(h.fetchCalls).toBe(1);
+    expect(h.fetchCalls).toBe(2);
     h.clock += 1;
     await source.get({ force: true });
-    expect(h.fetchCalls).toBe(2);
+    expect(h.fetchCalls).toBe(3);
   });
 
   it('dedupes concurrent calls into one request', async () => {
@@ -118,19 +126,56 @@ describe('UsageSource', () => {
     expect(snapshot.fetchedAt?.getTime()).toBe(T0);
   });
 
-  it('backs off after a 429 for Retry-After, then tries again', async () => {
-    const source = h.source(null, 10_000);
-    h.responses.push(err(usageError('rate_limited', '429', null, 120_000)));
-    expect((await source.get()).error?.code).toBe('rate_limited');
-    expect(h.fetchCalls).toBe(1);
+  it.each([[0], [null]])('holds 5 min after a 429 with Retry-After %j, then tries again (the 2026-10-09 loop)', async (retryAfterMs) => {
+    const source = h.source(null, MAX_AGE);
+    h.responses.push(err(rateLimitedError(retryAfterMs)));
+    const first = await source.get();
+    expect(first.error?.code).toBe('rate_limited');
+    expect(first.retryAt?.getTime()).toBe(T0 + BASE_HOLD_MS);
 
-    h.clock += 60_000;
+    h.clock += MAX_AGE;
     const during = await source.get({ force: true });
     expect(h.fetchCalls).toBe(1);
-    expect(during.error?.code).toBe('rate_limited');
-    expect(during.error?.retryAfterMs).toBe(60_000);
+    expect(during).toMatchObject({ error: { code: 'rate_limited' }, retryAt: new Date(T0 + BASE_HOLD_MS) });
 
-    h.clock += 60_000;
+    h.clock = T0 + BASE_HOLD_MS;
+    expect(await source.get()).toMatchObject({ error: null, retryAt: null });
+    expect(h.fetchCalls).toBe(2);
+  });
+
+  it('doubles the hold for 429s in a row up to 30 min, and starts over after a good read', async () => {
+    const source = h.source(null, 10_000);
+    const holds = [5, 10, 20, 30, 30].map((minutes) => minutes * MIN);
+    for (const hold of holds) {
+      h.responses.push(err(rateLimitedError(null)));
+      const at = h.clock;
+      expect((await source.get()).retryAt?.getTime()).toBe(at + hold);
+      h.clock = at + hold;
+    }
+    expect((await source.get()).error).toBeNull();
+    h.clock += 10_000;
+    h.responses.push(err(rateLimitedError(null)));
+    expect((await source.get()).retryAt?.getTime()).toBe(h.clock + BASE_HOLD_MS);
+    expect(h.fetchCalls).toBe(7);
+  });
+
+  it('waits a longer positive Retry-After, capped at 1h, never less than the doubling hold', () => {
+    expect(holdMs(1, 0)).toBe(BASE_HOLD_MS);
+    expect(holdMs(1, 30_000)).toBe(BASE_HOLD_MS);
+    expect(holdMs(1, 2_461_000)).toBe(2_461_000);
+    expect(holdMs(2, 7_200_000)).toBe(3_600_000);
+    expect(holdMs(9, null)).toBe(30 * MIN);
+    expect(holdMs(500, null)).toBe(30 * MIN);
+  });
+
+  it('calls again as soon as a hold ends, not a whole maxAge after the last look', async () => {
+    const source = h.source(null, 5 * MIN);
+    h.responses.push(err(rateLimitedError(471_000)));
+    expect((await source.get()).retryAt?.getTime()).toBe(T0 + 471_000);
+    h.clock = T0 + 5 * MIN;
+    await source.get();
+    expect(h.fetchCalls).toBe(1);
+    h.clock = T0 + 471_000;
     expect((await source.get()).error).toBeNull();
     expect(h.fetchCalls).toBe(2);
   });
@@ -213,21 +258,85 @@ describe('UsageSource cache file', () => {
     expect((await h.source(file).get()).payload).toEqual(payload(3));
   });
 
-  it('shares a 429 backoff with every process using the cache dir', async () => {
-    h.responses.push(err(usageError('rate_limited', '429', null, 120_000)));
+  it('shares a 429 hold with every process using the cache dir', async () => {
+    h.responses.push(err(rateLimitedError(null)));
     expect((await h.source(file, 10_000).get()).error?.code).toBe('rate_limited');
     const backoff = join(dir, 'nested', 'backoff.json');
     expect((await stat(backoff)).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(await readFile(backoff, 'utf8'))).toEqual({ version: 1, until: T0 + 120_000 });
+    expect(JSON.parse(await readFile(backoff, 'utf8'))).toEqual({ version: 1, until: T0 + BASE_HOLD_MS, streak: 1 });
 
     h.clock += 30_000;
     const other = await h.source(file, 10_000).get({ force: true });
     expect(h.fetchCalls).toBe(1);
-    expect(other.error).toMatchObject({ code: 'rate_limited', retryAfterMs: 90_000, hint: 'Próxima consulta liberada em 1 min.' });
+    expect(other).toMatchObject({ error: { code: 'rate_limited' }, retryAt: new Date(T0 + BASE_HOLD_MS) });
 
-    h.clock += 90_000;
+    h.clock = T0 + BASE_HOLD_MS;
     expect((await h.source(file, 10_000).get()).error).toBeNull();
     expect(h.fetchCalls).toBe(2);
+  });
+
+  it('carries the streak across processes and reads a file from before it ({version, until})', async () => {
+    const backoff = join(dir, 'nested', 'backoff.json');
+    await mkdir(join(dir, 'nested'), { recursive: true });
+    await writeFile(backoff, JSON.stringify({ version: 1, until: T0 + 2 * MIN }));
+    expect((await h.source(file).get()).retryAt?.getTime()).toBe(T0 + 2 * MIN);
+    expect(h.fetchCalls).toBe(0);
+
+    h.clock = T0 + 2 * MIN;
+    h.responses.push(err(rateLimitedError(null)));
+    expect((await h.source(file).get()).retryAt?.getTime()).toBe(h.clock + 10 * MIN);
+    expect(JSON.parse(await readFile(backoff, 'utf8'))).toEqual({ version: 1, until: h.clock + 10 * MIN, streak: 2 });
+  });
+
+  it('starts a new streak when the previous hold ended over an hour ago', async () => {
+    await mkdir(join(dir, 'nested'), { recursive: true });
+    await writeFile(join(dir, 'nested', 'backoff.json'), JSON.stringify({ version: 1, until: T0 - 61 * MIN, streak: 4 }));
+    h.responses.push(err(rateLimitedError(null)));
+    expect((await h.source(file).get()).retryAt?.getTime()).toBe(T0 + BASE_HOLD_MS);
+  });
+
+  it('reports an expired login or a credentials error ahead of a shared 429 hold', async () => {
+    h.responses.push(err(rateLimitedError(3_600_000)));
+    await h.source(file).get();
+    h.clock += 10 * MIN;
+
+    h.credentialsResult = ok(credentials({ expiresAt: new Date(h.clock - 60_000) }));
+    const expired = await h.source(file).get();
+    expect(expired).toMatchObject({ error: { code: 'token_expired', hint: expect.stringContaining('`claude`') }, retryAt: null });
+
+    h.credentialsResult = err(usageError('keychain_error', 'O Keychain não respondeu.'));
+    expect((await h.source(file).get()).error?.code).toBe('keychain_error');
+
+    h.credentialsResult = ok(credentials());
+    expect((await h.source(file).get()).error?.code).toBe('rate_limited');
+    expect(h.fetchCalls).toBe(1);
+  });
+
+  it('still holds on a file whose streak is junk, counting it as one 429', async () => {
+    const backoff = join(dir, 'nested', 'backoff.json');
+    await mkdir(join(dir, 'nested'), { recursive: true });
+    await writeFile(backoff, JSON.stringify({ version: 1, until: T0 + 2 * MIN, streak: 'x' }));
+    expect((await h.source(file).get()).retryAt?.getTime()).toBe(T0 + 2 * MIN);
+    expect(h.fetchCalls).toBe(0);
+
+    h.clock = T0 + 2 * MIN;
+    h.responses.push(err(rateLimitedError(0)));
+    expect((await h.source(file).get()).retryAt?.getTime()).toBe(h.clock + 10 * MIN);
+  });
+
+  it('does not hold on a 401, a 5xx or a network error, nor count them in the streak', async () => {
+    const source = h.source(file, 10_000);
+    for (const error of [
+      usageError('unauthorized', 'A API recusou o login (401).'),
+      usageError('upstream_error', 'A API do Claude falhou (HTTP 503).'),
+      usageError('network_error', 'Sem conexão com api.anthropic.com.'),
+    ]) {
+      h.responses.push(err(error));
+      expect(await source.get()).toMatchObject({ error: { code: error.code }, retryAt: null });
+      h.clock += 10_000;
+    }
+    await expect(stat(join(dir, 'nested', 'backoff.json'))).rejects.toThrow();
+    expect(h.fetchCalls).toBe(3);
   });
 
   it('ignores a backoff file that is junk or absurdly far out', async () => {

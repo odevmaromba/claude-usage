@@ -1,5 +1,3 @@
-import { formatDuration } from './format.js';
-
 export type UsageErrorCode =
   | 'no_credentials'
   | 'bad_credentials'
@@ -19,6 +17,7 @@ export interface UsageError {
   readonly message: string;
   /** Next step for the user; text between backticks is a command. */
   readonly hint: string | null;
+  /** The API's `Retry-After` in ms, as sent (`0` = no wait given); null when absent. UsageSource turns it into a hold. */
   readonly retryAfterMs: number | null;
 }
 
@@ -37,7 +36,10 @@ export function usageError(
   return { code, message, hint, retryAfterMs };
 }
 
-/** 429, from the API or from a backoff still running (in any process). */
-export function rateLimitedError(waitMs: number): UsageError {
-  return usageError('rate_limited', 'Consultas demais em pouco tempo (429).', `Próxima consulta liberada em ${formatDuration(waitMs)}.`, waitMs);
+/**
+ * 429, from the API or from a hold still running in any process. No hint here: the display says
+ * when the next call is allowed, from `Snapshot.retryAt`.
+ */
+export function rateLimitedError(retryAfterMs: number | null = null): UsageError {
+  return usageError('rate_limited', 'Consultas demais em pouco tempo (429).', null, retryAfterMs);
 }

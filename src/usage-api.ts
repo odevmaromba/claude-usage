@@ -7,11 +7,13 @@ import { VERSION } from './version.js';
 export const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA = 'oauth-2025-04-20';
 const DEFAULT_TIMEOUT_MS = 10_000;
-const DEFAULT_RATE_LIMIT_BACKOFF_MS = 60_000;
 
 /** Top level must be a JSON object; each section is validated on its own in usage-view. */
 export const UsagePayloadSchema = z.record(z.string(), z.unknown());
 export type UsagePayload = z.infer<typeof UsagePayloadSchema>;
+
+/** Anthropic's rate-limit body. Claude Code reads it as a 429 even on a 2xx. */
+const RateLimitEnvelopeSchema = z.object({ error: z.object({ type: z.literal('rate_limit_error') }) });
 
 export type FetchFn = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -61,6 +63,8 @@ export async function fetchUsage(
   if (!parsed.success) {
     return err(usageError('bad_response', 'A API do Claude respondeu num formato inesperado.', HINTS.retry));
   }
+  // Cached as a payload, it would replace the last good numbers with nothing.
+  if (RateLimitEnvelopeSchema.safeParse(parsed.data).success) return err(rateLimitedError(null));
   return ok(parsed.data);
 }
 
@@ -75,9 +79,7 @@ function httpError(response: Response, now: number): UsageError {
   const { status } = response;
   if (status === 401) return usageError('unauthorized', 'A API recusou o login (401).', HINTS.renew);
   if (status === 403) return usageError('forbidden', 'O login não tem permissão pra ler o uso (403).', HINTS.login);
-  if (status === 429) {
-    return rateLimitedError(parseRetryAfter(response.headers.get('retry-after'), now) ?? DEFAULT_RATE_LIMIT_BACKOFF_MS);
-  }
+  if (status === 429) return rateLimitedError(parseRetryAfter(response.headers.get('retry-after'), now));
   return usageError('upstream_error', `A API do Claude falhou (HTTP ${status}).`, HINTS.retry);
 }
 

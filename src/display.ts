@@ -1,5 +1,5 @@
 import type { UsageErrorCode } from './errors.js';
-import { formatAgo, formatDuration, formatMoney, formatStamp, formatWhen } from './format.js';
+import { formatAgo, formatClock, formatDuration, formatMoney, formatStamp, formatWhen } from './format.js';
 import type { Snapshot } from './usage-source.js';
 import { buildUsageView, type CreditsView, type LimitView, type Severity } from './usage-view.js';
 
@@ -57,6 +57,16 @@ function nearestMinute(date: Date): Date {
   return new Date(Math.round(date.getTime() / MINUTE_MS) * MINUTE_MS);
 }
 
+/**
+ * "Próxima consulta liberada às 15:43." A clock time, so it stays true however late a frame is drawn
+ * (the web banner is a live region: a countdown would be re-announced every minute). Rounded up: no
+ * call goes out before the minute shown. A hold lasts at most 1h, so the clock alone is unambiguous.
+ */
+function releaseHint(retryAt: Date, timeZone?: string): string {
+  const at = new Date(Math.ceil(retryAt.getTime() / MINUTE_MS) * MINUTE_MS);
+  return `Próxima consulta liberada às ${formatClock(at, timeZone)}.`;
+}
+
 export function toDisplay(snapshot: Snapshot, now: Date, timeZone?: string): Display {
   const view = snapshot.payload ? buildUsageView(snapshot.payload) : null;
   const updatedAt = snapshot.fetchedAt ? formatStamp(snapshot.fetchedAt, now, timeZone) : null;
@@ -80,7 +90,7 @@ export function toDisplay(snapshot: Snapshot, now: Date, timeZone?: string): Dis
           level: view ? 'warning' : 'error',
           code: snapshot.error.code,
           message: view && updatedAt ? `${snapshot.error.message} Mostrando dados de ${updatedAt}.` : snapshot.error.message,
-          hint: snapshot.error.hint,
+          hint: snapshot.retryAt ? releaseHint(snapshot.retryAt, timeZone) : snapshot.error.hint,
         }
       : snapshot.credentialsSource === 'fixture'
         ? FIXTURE_NOTICE
