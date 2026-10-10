@@ -16,7 +16,7 @@ só Zod em runtime. Modos: terminal, `-w`, `--web` (janela local), `--json`.
 
 ## Comandos
 
-- T0 antes de PR: `pnpm t0` (lint, typecheck, Vitest, build). CircleCI repete no push.
+- T0 antes de PR: `pnpm t0`; o CircleCI repete no push.
 - `pnpm build && pnpm link:bin` → `~/.local/bin/claude-usage`.
 - Sem rede/Keychain: `CLAUDE_USAGE_FIXTURE=test/fixtures/usage-2026-10-07.json node dist/cli.js`.
 
@@ -36,7 +36,6 @@ só Zod em runtime. Modos: terminal, `-w`, `--web` (janela local), `--json`.
   e acorda no fim com até 30s de jitter. Login vencido/sem credencial aparece antes do 429.
 - Keychain: só `Claude Code-credentials`; sem `CLAUDE_CONFIG_DIR` custom no macOS.
 - `src/version.ts` acompanha o `package.json`. TypeScript `~5.9` (o typescript-eslint recusa o 7).
-  Config do pnpm no `pnpm-workspace.yaml`.
 
 ## Divergências
 
